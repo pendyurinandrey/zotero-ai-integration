@@ -13,4 +13,4 @@
 | bge-m3 | latest, ID 790764642607 (1,2 ГБ) | 2026-10-03 |
 | zotero-mcp-server | 0.13.1 (extras: semantic, pdf) | 2026-10-03 |
 | Claude Code | 2.1.286 (из приложения Claude) | 2026-10-03 |
-| ocrmypdf (если нужен) | 17.13.0 (Tesseract 5.5.3, только eng; tesseract-lang не установлен) | 2026-10-03 |
+| ocrmypdf (если нужен) | 17.13.0 (Tesseract 5.5.3; tesseract-lang 4.1.0 — русский и ещё 160 языков) | 2026-10-03 |
