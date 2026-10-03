@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__zotero__zotero_semantic_search",
+      "mcp__zotero__zotero_search_items",
+      "mcp__zotero__zotero_search_by_tag",
+      "mcp__zotero__zotero_search_by_citation_key",
+      "mcp__zotero__zotero_advanced_search",
+      "mcp__zotero__zotero_search_collections",
+      "mcp__zotero__zotero_get_collections",
+      "mcp__zotero__zotero_get_collection_items",
+      "mcp__zotero__zotero_get_item_metadata",
+      "mcp__zotero__zotero_get_item_fulltext",
+      "mcp__zotero__zotero_get_item_children",
+      "mcp__zotero__zotero_get_item_related",
+      "mcp__zotero__zotero_get_attachment_path",
+      "mcp__zotero__zotero_read_pdf_pages",
+      "mcp__zotero__zotero_get_pdf_outline",
+      "mcp__zotero__zotero_get_annotations",
+      "mcp__zotero__zotero_get_notes",
+      "mcp__zotero__zotero_get_tags",
+      "mcp__zotero__zotero_get_recent",
+      "mcp__zotero__zotero_library_coverage",
+      "mcp__zotero__zotero_list_libraries",
+      "mcp__zotero__zotero_get_search_database_status",
+      "Bash(curl -s http://127.0.0.1:11434/api/version)",
+      "Bash(pgrep -x zotero)"
+    ]
+  }
+}

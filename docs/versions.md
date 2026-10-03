@@ -12,5 +12,5 @@
 | Ollama | 0.35.1 | 2026-10-03 |
 | bge-m3 | latest, ID 790764642607 (1,2 ГБ) | 2026-10-03 |
 | zotero-mcp-server | 0.13.1 (extras: semantic, pdf) | 2026-10-03 |
-| Claude Code | TODO | TODO |
+| Claude Code | 2.1.286 (из приложения Claude) | 2026-10-03 |
 | ocrmypdf (если нужен) | TODO | TODO |
