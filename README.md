@@ -37,6 +37,13 @@ uv tool install --python 3.13 "zotero-mcp-server[semantic,pdf] @ git+https://git
 
 ## С чего начать
 
+0. **Склонируйте этот репозиторий** (при необходимости попросите доступ у автора) и откройте в нём терминал. Работать с библиотекой через ИИ вы будете из этой же папки: в ней лежат инструкции для нейросети и скрипты.
+
+   ```bash
+   git clone https://github.com/pendyurinandrey/zotero-ai-integration.git
+   cd zotero-ai-integration
+   ```
+
 1. **Прочитайте [архитектуру](docs/architecture.md)** (5 минут): как устроено решение и что где работает.
 2. **Общая часть (делается всегда, один раз на компьютер)** — по порядку:
    1. [Подготовка: Homebrew и uv](docs/setup/01-prerequisites.md)
