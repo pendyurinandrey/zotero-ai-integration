@@ -1,5 +1,23 @@
-# Подготовка (Homebrew, Python)
+# 1. Подготовка: Homebrew, uv, Python
 
-TODO: заполнить после проверки на реальной установке.
+Нужны Homebrew и `uv` (менеджер Python-окружений). Системный Python не используется: `zotero-mcp-server` ставится через `uv tool` в собственное окружение, поэтому версия системного Python не важна.
 
-- Проверенные версии: см. [versions.md](../versions.md)
+## Проверка
+
+```bash
+brew --version
+uv --version
+```
+
+Если команды не найдены:
+
+```bash
+# Homebrew: https://brew.sh (команда установки на главной странице)
+brew install uv
+```
+
+## Примечание про Python
+
+Не полагайтесь на самый новый Python (3.14): для `torch` и `sentence-transformers` могут не быть готовых сборок. Версию Python для сервера задаём явно на шаге 4.
+
+Проверенные версии: см. [versions.md](../versions.md).

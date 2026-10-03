@@ -4,12 +4,12 @@
 
 | Компонент | Версия | Дата проверки |
 |---|---|---|
-| macOS | TODO | TODO |
-| Zotero | 10.x (уточнить) | TODO |
-| Homebrew | TODO | TODO |
-| Python / uv | TODO | TODO |
-| Ollama | TODO | TODO |
-| bge-m3 | TODO | TODO |
+| macOS | 26.6.2 (Apple Silicon) | 2026-10-03 |
+| Zotero | 10.0.5 | 2026-10-03 |
+| Homebrew | 7.0.7 | 2026-10-03 |
+| uv | 0.8.23 | 2026-10-03 |
+| Ollama | 0.35.1 | 2026-10-03 |
+| bge-m3 | latest, ID 790764642607 (1,2 ГБ) | 2026-10-03 |
 | zotero-mcp-server | TODO | TODO |
 | Claude Code | TODO | TODO |
 | ocrmypdf (если нужен) | TODO | TODO |
