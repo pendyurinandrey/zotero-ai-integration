@@ -8,8 +8,9 @@
 | Zotero | 10.0.5 | 2026-10-03 |
 | Homebrew | 7.0.7 | 2026-10-03 |
 | uv | 0.8.23 | 2026-10-03 |
+| Python (в окружении сервера) | 3.13 (через `uv tool --python 3.13`) | 2026-10-03 |
 | Ollama | 0.35.1 | 2026-10-03 |
 | bge-m3 | latest, ID 790764642607 (1,2 ГБ) | 2026-10-03 |
-| zotero-mcp-server | TODO | TODO |
+| zotero-mcp-server | 0.13.1 (extras: semantic, pdf) | 2026-10-03 |
 | Claude Code | TODO | TODO |
 | ocrmypdf (если нужен) | TODO | TODO |
