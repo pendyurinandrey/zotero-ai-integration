@@ -24,7 +24,9 @@
       "mcp__zotero__zotero_list_libraries",
       "mcp__zotero__zotero_get_search_database_status",
       "Bash(curl -s http://127.0.0.1:11434/api/version)",
-      "Bash(pgrep -x zotero)"
+      "Bash(pgrep -x zotero)",
+      "Bash(scripts/check-text-layer.sh*)",
+      "Bash(./scripts/check-text-layer.sh*)"
     ]
   }
 }
