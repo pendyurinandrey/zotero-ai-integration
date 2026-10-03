@@ -26,7 +26,9 @@
       "Bash(curl -s http://127.0.0.1:11434/api/version)",
       "Bash(pgrep -x zotero)",
       "Bash(scripts/check-text-layer.sh*)",
-      "Bash(./scripts/check-text-layer.sh*)"
+      "Bash(./scripts/check-text-layer.sh*)",
+      "Bash(scripts/search-in-collection.sh*)",
+      "Bash(./scripts/search-in-collection.sh*)"
     ]
   }
 }

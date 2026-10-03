@@ -9,30 +9,21 @@
 """
 import argparse
 import os
-import shutil
 import sqlite3
 import sys
-import tempfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from _zotero_common import copy_db, resolve_collection  # noqa: E402
 
 MIN_CHARS = 50          # страница считается текстовой, если в ней больше стольких символов
 PARTIAL_SHARE = 0.2     # доля страниц без текста, с которой PDF считается «частично без текста»
 
 
-def copy_db(zotero_dir: Path) -> Path:
-    tmp = Path(tempfile.mkdtemp(prefix="zotero-check-"))
-    for suffix in ("", "-wal", "-shm"):
-        src = zotero_dir / f"zotero.sqlite{suffix}"
-        if src.exists():
-            shutil.copy2(src, tmp / src.name)
-    return tmp / "zotero.sqlite"
-
-
-def collection_item_ids(db, key: str) -> set[int]:
-    row = db.execute("SELECT collectionID FROM collections WHERE key=?", (key,)).fetchone()
-    if not row:
-        sys.exit(f"Коллекция с ключом {key} не найдена")
-    return {r[0] for r in db.execute("SELECT itemID FROM collectionItems WHERE collectionID=?", (row[0],))}
+def collection_item_ids(db, ref: str) -> tuple[set[int], str]:
+    coll = resolve_collection(db, ref)
+    ids = {r[0] for r in db.execute("SELECT itemID FROM collectionItems WHERE collectionID=?", (coll["collectionID"],))}
+    return ids, coll["collectionName"]
 
 
 def title_of(db, item_id: int) -> str:
@@ -62,7 +53,7 @@ def indexed_item_keys(config_dir: Path) -> set[str] | None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--collection", help="ключ коллекции (проверять только её статьи)")
+    ap.add_argument("--collection", help="ключ или название коллекции (проверять только её статьи)")
     ap.add_argument("--zotero-dir", default=os.environ.get("ZOTERO_DATA_DIR", "~/Zotero"))
     ap.add_argument("--no-index", action="store_true", help="не сверять с индексом поиска")
     args = ap.parse_args()
@@ -74,7 +65,7 @@ def main() -> int:
     db = sqlite3.connect(copy_db(zotero_dir))
     db.row_factory = sqlite3.Row
 
-    scope = collection_item_ids(db, args.collection) if args.collection else None
+    scope, scope_name = collection_item_ids(db, args.collection) if args.collection else (None, None)
     trashed = {r[0] for r in db.execute("SELECT itemID FROM deletedItems")}
 
     # Статьи (не вложения и не заметки) и их PDF
@@ -126,7 +117,7 @@ def main() -> int:
         entry = (it["key"], title, pdf.name, with_text, total)
         (no_text if with_text == 0 else partial).append(entry)
 
-    scope_txt = f"коллекция {args.collection}" if args.collection else "вся библиотека"
+    scope_txt = f"коллекция «{scope_name}»" if args.collection else "вся библиотека"
     print(f"Проверено: {len(items)} статей, {checked} PDF ({scope_txt})")
     problems = 0
 

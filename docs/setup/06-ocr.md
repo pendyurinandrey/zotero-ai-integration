@@ -68,7 +68,7 @@ ocrmypdf -l rus+eng --skip-text скан.pdf скан-распознанный.p
 
 ```bash
 scripts/check-text-layer.sh                       # вся библиотека
-scripts/check-text-layer.sh --collection КЛЮЧ     # одна коллекция
+scripts/check-text-layer.sh --collection "Название или ключ"   # одна коллекция
 ```
 
 Что он сообщает:
