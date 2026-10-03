@@ -1,13 +1,5 @@
 # Troubleshooting
 
-## Локальный API Zotero отвечает 403
-
-Опция «Allow other applications on this computer to communicate with Zotero» выключена. Для поиска и чтения это нормально, она нужна только для записи в Zotero. См. [шаг 2](setup/02-zotero.md).
-
-## Запись в Zotero не работает
-
-Проверьте, что опция из предыдущего пункта включена и что Zotero слушает порт 23119 (порт по умолчанию; сервер жёстко использует его для записи). Затем выполните `zotero-mcp authorize-local`.
-
 ## Запрос к `http://127.0.0.1:11434` не отвечает
 
 Ollama не запущен. Запустите `brew services start ollama` или `ollama serve`.
@@ -18,7 +10,7 @@ Ollama не запущен. Запустите `brew services start ollama` ил
 
 ## `claude mcp list` не показывает `zotero` или показывает ошибку
 
-`claude mcp add` выполняется для папки, где вы его запустили (область `local`). Выполните команду из папки репозитория. Если сервер в состоянии ошибки, проверьте `zotero-mcp version` и что Zotero запущен.
+`claude mcp add` выполняется для папки, где вы его запустили (область `local`). Выполните команду из папки репозитория. Если сервер в состоянии ошибки, проверьте `zotero-mcp version`.
 
 ## Поиск по коллекции через MCP даёт ошибку `filters ... Input should be a valid string`
 

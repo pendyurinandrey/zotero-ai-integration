@@ -11,7 +11,7 @@
 1. **Прочитайте [архитектуру](docs/architecture.md)** (5 минут): как устроено решение и что где работает.
 2. **Общая часть (делается всегда, один раз на компьютер)** — по порядку:
    1. [Подготовка: Homebrew, Python](docs/setup/01-prerequisites.md)
-   2. [Zotero (локальный API нужен только для записи)](docs/setup/02-zotero.md)
+   2. [Zotero](docs/setup/02-zotero.md)
    3. [Ollama и модель bge-m3](docs/setup/03-ollama-and-model.md)
    4. [MCP-сервер zotero-mcp](docs/setup/04-mcp-server.md)
    5. [Индексация библиотеки](docs/setup/05-indexing.md)
