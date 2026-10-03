@@ -1,12 +1,12 @@
 # Troubleshooting
 
-## Zotero отвечает 403 на запросы к `<ZOTERO_API_URL>`
+## Локальный API Zotero отвечает 403
 
-Не включена опция «Allow other applications on this computer to communicate with Zotero». См. [шаг 2](setup/02-zotero.md).
+Опция «Allow other applications on this computer to communicate with Zotero» выключена. Для поиска и чтения это нормально, она нужна только для записи в Zotero. См. [шаг 2](setup/02-zotero.md).
 
-## Запрос к `<ZOTERO_API_URL>` не отвечает
+## Запись в Zotero не работает
 
-Zotero не запущен.
+Проверьте, что опция из предыдущего пункта включена и что Zotero слушает порт 23119 (порт по умолчанию; сервер жёстко использует его для записи). Затем выполните `zotero-mcp authorize-local`.
 
 ## Запрос к `http://127.0.0.1:11434` не отвечает
 
