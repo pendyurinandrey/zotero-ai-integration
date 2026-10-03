@@ -8,6 +8,7 @@
 Коды выхода: 0 - проблем нет, 1 - найдены PDF без текста / не проиндексированные статьи, 2 - ошибка.
 """
 import argparse
+import hashlib
 import os
 import sqlite3
 import sys
@@ -91,6 +92,22 @@ def main() -> int:
         else:
             unchecked.append((title_of(db, r["parentItemID"]), path))
 
+    # PDF-вложения без родительской записи (Zotero не смог создать запись по метаданным и т. п.):
+    # индексатор берёт только статьи и книги, такие файлы в поиск не попадут.
+    orphans = []
+    for r in db.execute(
+        "SELECT a.itemID, a.linkMode, a.path, i.key FROM itemAttachments a JOIN items i USING(itemID) "
+        "WHERE a.parentItemID IS NULL AND a.contentType = 'application/pdf'"):
+        if r["itemID"] in trashed or (scope is not None and r["itemID"] not in scope):
+            continue
+        path = r["path"] or ""
+        file = (zotero_dir / "storage" / r["key"] / path[len("storage:"):]
+                if r["linkMode"] in (0, 1) and path.startswith("storage:") else None)
+        title = title_of(db, r["itemID"])
+        name = file.name if file else path
+        digest = hashlib.md5(file.read_bytes()).hexdigest() if file and file.exists() else None
+        orphans.append({"key": r["key"], "title": title, "name": name, "digest": digest})
+
     no_text, partial, no_pdf, missing_files = [], [], [], []
     checked = 0
     for item_id, it in items.items():
@@ -133,6 +150,17 @@ def main() -> int:
             print(f"  - [{key}] {title[:80]} (файл {name}, текст на {with_text} из {total} страниц)")
     if no_text or partial:
         print("  Что делать: docs/setup/06-ocr.md (ocrmypdf --skip-text, затем заменить вложение).")
+    if orphans:
+        problems += 1
+        print(f"\nPDF БЕЗ РОДИТЕЛЬСКОЙ ЗАПИСИ ({len(orphans)}): отдельные вложения, не привязанные ни к статье, ни к книге. "
+              "В индекс они не попадают, поиск их содержимого не увидит.")
+        for o in orphans:
+            same = [x["key"] for x in orphans if x is not o and o["digest"] and x["digest"] == o["digest"]]
+            dup = f"; точная копия [{', '.join(same)}]" if same else ""
+            label = o["title"] if o["title"] != "(без названия)" else o["name"]
+            print(f"  - [{o['key']}] {label[:80]} (файл {o['name']}{dup})")
+        print("  Что делать: создайте для файла запись (тип «Книга» или «Статья») и перетащите в неё файл,"
+              " повторные копии удалите, затем zotero-mcp update-db --fulltext (docs/setup/06-ocr.md).")
     if no_pdf:
         print(f"\nБез PDF-вложения ({len(no_pdf)}), в поиске только по метаданным:")
         for key, title, other in no_pdf:
