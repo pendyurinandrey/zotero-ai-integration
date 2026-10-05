@@ -29,7 +29,13 @@
       "Bash(scripts/search-in-collection.sh*)",
       "Bash(./scripts/search-in-collection.sh*)",
       "Bash(scripts/search-passages.sh*)",
-      "Bash(./scripts/search-passages.sh*)"
+      "Bash(./scripts/search-passages.sh*)",
+      "Bash(.claude/skills/zotero-library/scripts/check-text-layer.sh*)",
+      "Bash(./.claude/skills/zotero-library/scripts/check-text-layer.sh*)",
+      "Bash(.claude/skills/zotero-library/scripts/search-in-collection.sh*)",
+      "Bash(./.claude/skills/zotero-library/scripts/search-in-collection.sh*)",
+      "Bash(.claude/skills/zotero-library/scripts/search-passages.sh*)",
+      "Bash(./.claude/skills/zotero-library/scripts/search-passages.sh*)"
     ]
   }
 }

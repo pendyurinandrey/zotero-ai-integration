@@ -12,6 +12,10 @@ Ollama не запущен. Запустите `brew services start ollama` ил
 
 `claude mcp add` выполняется для папки, где вы его запустили (область `local`). Выполните команду из папки репозитория. Если сервер в состоянии ошибки, проверьте `zotero-mcp version`.
 
+## В папке предмета Claude не видит skill или MCP-сервер zotero
+
+Проверьте, что папка подключена скриптом `scripts/new-subject.sh` ([docs/subjects.md](subjects.md)): должны быть `.claude/skills/zotero-library`, `.claude/settings.json` и `.mcp.json`. Симлинки «висят», если репозиторий перенесли; удалите их и запустите скрипт заново. Подключение `.mcp.json` нужно один раз подтвердить в Claude Code (`claude mcp list` показывает `Pending approval`, пока этого не сделано).
+
 ## Поиск по коллекции через MCP даёт ошибку `filters ... Input should be a valid string`
 
 Это известное ограничение: инструмент `zotero_semantic_search` принимает фильтр только как словарь со строковыми значениями, а для ограничения набором статей нужен вложенный фильтр `{"$in": [...]}`. Claude Code не умеет передать его через MCP. Поэтому поиск внутри коллекции выполняется скриптом `scripts/search-in-collection.sh` (он вызывает `zotero-cli`, где фильтр передаётся аргументом командной строки). Подробнее: [docs/clients/claude-code.md](clients/claude-code.md).
