@@ -36,6 +36,23 @@
       "Bash(./.claude/skills/zotero-library/scripts/search-in-collection.sh*)",
       "Bash(.claude/skills/zotero-library/scripts/search-passages.sh*)",
       "Bash(./.claude/skills/zotero-library/scripts/search-passages.sh*)"
+    ],
+    "deny": [
+      "mcp__zotero__zotero_add_item",
+      "mcp__zotero__zotero_attach_file",
+      "mcp__zotero__zotero_authorize_local_writes",
+      "mcp__zotero__zotero_batch_update",
+      "mcp__zotero__zotero_create_annotation",
+      "mcp__zotero__zotero_create_collection",
+      "mcp__zotero__zotero_delete_annotation",
+      "mcp__zotero__zotero_delete_collection",
+      "mcp__zotero__zotero_delete_item",
+      "mcp__zotero__zotero_manage_note",
+      "mcp__zotero__zotero_set_item_collections",
+      "mcp__zotero__zotero_set_item_parent",
+      "mcp__zotero__zotero_update_annotation",
+      "mcp__zotero__zotero_update_collection",
+      "mcp__zotero__zotero_update_item"
     ]
   }
 }
