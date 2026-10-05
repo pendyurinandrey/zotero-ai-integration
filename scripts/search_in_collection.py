@@ -21,18 +21,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _zotero_common import copy_db, resolve_collection  # noqa: E402
-
-
-def collection_ids(db, root_id: int, with_sub: bool) -> set[int]:
-    ids, frontier = {root_id}, [root_id]
-    while with_sub and frontier:
-        cur = frontier.pop()
-        for (cid,) in db.execute("SELECT collectionID FROM collections WHERE parentCollectionID=?", (cur,)):
-            if cid not in ids:
-                ids.add(cid)
-                frontier.append(cid)
-    return ids
+from _zotero_common import collection_item_keys, copy_db, resolve_collection  # noqa: E402
 
 
 def main() -> int:
@@ -53,13 +42,7 @@ def main() -> int:
 
     coll = resolve_collection(db, args.collection)
 
-    ids = collection_ids(db, coll["collectionID"], args.subcollections)
-    marks = ",".join("?" * len(ids))
-    keys = sorted({r[0] for r in db.execute(
-        f"SELECT i.key FROM collectionItems ci JOIN items i USING(itemID) WHERE ci.collectionID IN ({marks}) "
-        "AND i.itemID NOT IN (SELECT itemID FROM deletedItems) "
-        "AND i.itemID NOT IN (SELECT itemID FROM itemAttachments) AND i.itemID NOT IN (SELECT itemID FROM itemNotes)",
-        tuple(ids))})
+    keys = collection_item_keys(db, coll, args.subcollections)
     if not keys:
         print(f"В коллекции «{coll['collectionName']}» нет статей", file=sys.stderr)
         return 2

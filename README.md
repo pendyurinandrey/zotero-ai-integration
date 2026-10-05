@@ -52,6 +52,7 @@ uv tool install --python 3.13 "zotero-mcp-server[semantic,pdf] @ git+https://git
    4. [MCP-сервер zotero-mcp](docs/setup/04-mcp-server.md)
    5. [Индексация библиотеки](docs/setup/05-indexing.md)
    6. [OCR для сканов](docs/setup/06-ocr.md) — по необходимости
+   7. [Расшифровки лекций и семинаров](docs/transcripts.md) — если ведёте такую коллекцию
 3. **Подключите нейросеть** — выберите свою:
    - Claude Code: [настройка](docs/clients/claude-code.md)
 4. Если что-то не работает: [troubleshooting](docs/troubleshooting.md).

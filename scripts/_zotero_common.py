@@ -45,3 +45,26 @@ def resolve_collection(db, ref: str):
             print(f"  {r['key']}  {r['collectionName']}", file=sys.stderr)
         sys.exit(2)
     return found[0]
+
+
+def collection_ids(db, root_id: int, with_sub: bool = False) -> set[int]:
+    """Идентификаторы коллекции и (по желанию) всех её подколлекций."""
+    ids, frontier = {root_id}, [root_id]
+    while with_sub and frontier:
+        cur = frontier.pop()
+        for (cid,) in db.execute("SELECT collectionID FROM collections WHERE parentCollectionID=?", (cur,)):
+            if cid not in ids:
+                ids.add(cid)
+                frontier.append(cid)
+    return ids
+
+
+def collection_item_keys(db, coll, with_sub: bool = False) -> list[str]:
+    """Ключи статей и книг коллекции (без вложений, заметок и записей из корзины)."""
+    ids = collection_ids(db, coll["collectionID"], with_sub)
+    marks = ",".join("?" * len(ids))
+    return sorted({r[0] for r in db.execute(
+        f"SELECT i.key FROM collectionItems ci JOIN items i USING(itemID) WHERE ci.collectionID IN ({marks}) "
+        "AND i.itemID NOT IN (SELECT itemID FROM deletedItems) "
+        "AND i.itemID NOT IN (SELECT itemID FROM itemAttachments) AND i.itemID NOT IN (SELECT itemID FROM itemNotes)",
+        tuple(ids))})
