@@ -60,11 +60,16 @@ def collection_ids(db, root_id: int, with_sub: bool = False) -> set[int]:
 
 
 def collection_item_keys(db, coll, with_sub: bool = False) -> list[str]:
-    """Ключи статей и книг коллекции (без вложений, заметок и записей из корзины)."""
+    """Ключи записей коллекции: статьи, книги и отдельные вложения без родителя (без заметок и записей из корзины).
+
+    Отдельные вложения (расшифровки, учебники в .txt, лежащие в коллекции без библиографической записи)
+    входят в область поиска: при включённой в zotero-mcp опции index_standalone_attachments они индексируются
+    как самостоятельные записи. Вложения, у которых есть родитель, отдельно не учитываются (они принадлежат ему)."""
     ids = collection_ids(db, coll["collectionID"], with_sub)
     marks = ",".join("?" * len(ids))
     return sorted({r[0] for r in db.execute(
         f"SELECT i.key FROM collectionItems ci JOIN items i USING(itemID) WHERE ci.collectionID IN ({marks}) "
         "AND i.itemID NOT IN (SELECT itemID FROM deletedItems) "
-        "AND i.itemID NOT IN (SELECT itemID FROM itemAttachments) AND i.itemID NOT IN (SELECT itemID FROM itemNotes)",
+        "AND i.itemID NOT IN (SELECT itemID FROM itemAttachments WHERE parentItemID IS NOT NULL) "
+        "AND i.itemID NOT IN (SELECT itemID FROM itemNotes)",
         tuple(ids))})

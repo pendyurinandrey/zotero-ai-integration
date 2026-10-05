@@ -27,7 +27,17 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _zotero_common import collection_item_keys, copy_db, resolve_collection  # noqa: E402
 
 TIME_RE = re.compile(r"\[(\d{1,2}:\d{2}(?::\d{2})?)\]")
-HEADER_RE = re.compile(r"\[(\d{1,2}:\d{2}(?::\d{2})?)\] ([^:\n]{1,40}):")
+# Реплика: «[ЧЧ:ММ:СС] текст» (лекция, один говорящий) или «[ЧЧ:ММ:СС] Спикер: текст» (семинар)
+TIMED_RE = re.compile(r"\[(\d{1,2}:\d{2}(?::\d{2})?)\](?: ([^:\n]{1,40}):)?")
+
+
+def is_speaker(label: str) -> bool:
+    """Метка спикера («Преподаватель», «Спикер 5», «Иван Петров»): 1-3 слова с заглавной буквы или числа.
+
+    Двоеточие внутри обычной фразы («А психологи сказали: ...») меткой не считается."""
+    words = label.split()
+    return (1 <= len(words) <= 3 and not re.search(r"[.,!?;]", label)
+            and all(w[:1].isupper() or w.isdigit() for w in words))
 
 
 def parse_args():
@@ -158,8 +168,11 @@ def previous_header(client, place):
         docs = got.get("documents") or []
         if not docs:
             return None
-        found = HEADER_RE.findall(docs[0] or "")
-        return f"[{found[-1][0]}] {found[-1][1]}" if found else None
+        found = TIMED_RE.findall(docs[0] or "")
+        if not found:
+            return None
+        time, label = found[-1]
+        return f"[{time}] {label.strip()}" if label and is_speaker(label.strip()) else f"[{time}]"
     except Exception:
         return None
 
@@ -215,7 +228,8 @@ def main() -> int:
     for k, item in enumerate(items, 1):
         mine = sorted((p for p in places if p["item"] == item), key=lambda p: (p["idx"] is None, p["idx"] or 0))
         first = mine[0]
-        meta = ", ".join(x for x in (first["authors"], str(first["date"]) if first["date"] else "") if x)
+        authors = "" if first["authors"] in ("No authors listed", "") else first["authors"]
+        meta = ", ".join(x for x in (authors, str(first["date"]) if first["date"] else "") if x)
         print(f"## {k}. {first['title']}")
         print(f"**Item Key:** {item}" + (f" | {meta}" if meta else "") + f" | мест из этой записи: {len(mine)}\n")
         for j, p in enumerate(mine, 1):
