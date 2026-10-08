@@ -19,6 +19,7 @@
 """
 import argparse
 import re
+import shlex
 import sys
 from collections import Counter
 from pathlib import Path
@@ -236,9 +237,14 @@ def main() -> int:
 
     actions, notes = [], []
     verdict = None
-    src_q = f'"{path.name}"'
-    ocr_q = f'"{path.stem}_ocr.pdf"'
-    fix_q = f'"{path.stem}_ocr_fix.pdf"'
+    full = path.resolve()
+    here = Path(__file__).resolve().parent                    # папка scripts/: команды печатаем с полными путями,
+    fix_sh = shlex.quote(str(here / "fix-ocr-layer.sh"))      # чтобы их можно было вставить из любой папки
+    check_sh = shlex.quote(str(here / "check-text-layer.sh"))
+    src_q = shlex.quote(str(full))
+    ocr_q = shlex.quote(str(full.with_name(full.stem + "_ocr.pdf")))
+    fix_q = shlex.quote(str(full.with_name(full.stem + "_ocr_fix.pdf")))
+    fixed_q = shlex.quote(str(full.with_name(full.stem + "_fix.pdf")))
 
     # 1. Нет текстового слоя
     if content and text_share < TEXT_SHARE_OK:
@@ -247,7 +253,7 @@ def main() -> int:
         verdict = f"НУЖЕН OCR: текст есть только на {text_share:.0%} страниц, остальные: {kind}"
         rot = " --rotate-pages" if lay["sideways"] else ""
         actions.append(f"ocrmypdf -l rus+eng --skip-text --output-type pdf{rot} {src_q} {ocr_q}")
-        actions.append(f"scripts/fix-ocr-layer.sh {ocr_q} {fix_q} --check")
+        actions.append(f"{fix_sh} {ocr_q} {fix_q} --check")
         if kinds["text"] and kinds["text"] > 0.05 * content:
             notes.append(f"Часть страниц ({kinds['text']}) уже с текстом: `--skip-text` оставит его как есть. Если этот "
                          "текст плохой, см. следующий пункт.")
@@ -255,7 +261,7 @@ def main() -> int:
     elif (stop_median is not None and stop_median < STOP_MEDIAN_MIN) or len(odd_pages) > ODD_PAGE_SHARE * n:
         verdict = "ТЕКСТОВЫЙ СЛОЙ БИТЫЙ: текст есть, но нечитаем (кодировка или скан со старым плохим OCR)"
         actions.append(f"ocrmypdf -l rus+eng --force-ocr --output-type pdf {src_q} {ocr_q}")
-        actions.append(f"scripts/fix-ocr-layer.sh {ocr_q} {fix_q} --check")
+        actions.append(f"{fix_sh} {ocr_q} {fix_q} --check")
         notes.append("`--force-ocr` растеризует страницы и распознаёт заново: векторный текст исчезнет, файл может "
                      "измениться по размеру. Сохраните исходник.")
     elif args.no_indexer:
@@ -271,12 +277,12 @@ def main() -> int:
             verdict = "ИНДЕКСАТОР НЕ ВИДИТ ТЕКСТ, хотя в просмотрщике он есть"
             notes.append("Типичная причина: PDF/A (Ghostscript переписал слой). Пересоберите из исходного скана с "
                          "`--output-type pdf`.")
-            actions.append(f'ocrmypdf -l rus+eng --skip-text --output-type pdf "исходный_скан.pdf" {ocr_q}')
-            actions.append(f"scripts/fix-ocr-layer.sh {ocr_q} {fix_q} --check")
+            actions.append(f"ocrmypdf -l rus+eng --skip-text --output-type pdf <исходный_скан.pdf> {ocr_q}")
+            actions.append(f"{fix_sh} {ocr_q} {fix_q} --check")
         elif ix["fidelity"] is not None and ix["fidelity"] < FIDELITY_OK:
             verdict = "ИНДЕКСАТОР ИСКАЖАЕТ ТЕКСТ (слова теряются или переставляются)"
             if lay["ocr_unfixed"]:
-                actions.append(f'scripts/fix-ocr-layer.sh {src_q} "{path.stem}_fix.pdf" --check')
+                actions.append(f"{fix_sh} {src_q} {fixed_q} --check")
                 notes.append("Причина: текстовый слой ocrmypdf (найден на проверенных страницах, ещё не исправлен).")
             elif lay["ocr_fixed"]:
                 notes.append("Слой ocrmypdf уже исправлен fix-ocr-layer.sh, остаточные искажения связаны с оглавлением, "
@@ -295,7 +301,7 @@ def main() -> int:
                          "списки литературы и строки с большими пробелами. Для проверки найдите поиском знакомую фразу "
                          "с такой страницы.")
             if lay["ocr_unfixed"]:
-                actions.append(f'scripts/fix-ocr-layer.sh {src_q} "{path.stem}_fix.pdf" --check')
+                actions.append(f"{fix_sh} {src_q} {fixed_q} --check")
         else:
             verdict = "МОЖНО ИМПОРТИРОВАТЬ КАК ЕСТЬ"
 
@@ -328,8 +334,7 @@ def main() -> int:
         print("\nЗамечания:")
         for t in notes:
             print(f"  - {t}")
-    print("\nПосле импорта: `zotero-mcp update-db --fulltext`, затем `scripts/check-text-layer.sh` и поиск по знакомой "
-          "фразе из книги.")
+    print(f"\nПосле импорта: zotero-mcp update-db --fulltext, затем {check_sh} и поиск по знакомой фразе из книги.")
     return 0 if verdict.startswith(("МОЖНО", "ТЕКСТ ЕСТЬ")) else 1
 
 
