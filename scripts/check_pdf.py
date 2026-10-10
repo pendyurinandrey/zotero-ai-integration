@@ -26,6 +26,9 @@ from pathlib import Path
 
 import pymupdf as fitz
 
+sys.path.insert(0, str(Path(__file__).parent))
+from _pdf_common import inspector_pages, scan_pages  # noqa: E402  (заодно отключает печать ошибок MuPDF)
+
 STOP = set("и в на не что как это с по к из для от или а но то при его ее их он она они был была были быть также "
            "которые который которая the of and to in is that for with on as are by be this from".split())
 MIN_TEXT_CHARS = 50          # страница считается текстовой, если символов больше
@@ -216,6 +219,15 @@ def main() -> int:
         print("В файле нет страниц.", file=sys.stderr)
         return 2
 
+    missing, damaged = scan_pages(doc)
+    insp_n = None
+    if not args.no_indexer:
+        try:
+            insp_n = inspector_pages(path)
+        except Exception:  # noqa: BLE001
+            insp_n = None
+    structure_bad = bool(missing) or (insp_n is not None and insp_n != n)
+
     rows = classify_empty(doc, analyze_text(doc))
     kinds = Counter(r["kind"] for r in rows)
     content = n - kinds["blank"]                      # непустые страницы (с текстом, картинкой или рисунками)
@@ -245,9 +257,28 @@ def main() -> int:
     ocr_q = shlex.quote(str(full.with_name(full.stem + "_ocr.pdf")))
     fix_q = shlex.quote(str(full.with_name(full.stem + "_ocr_fix.pdf")))
     fixed_q = shlex.quote(str(full.with_name(full.stem + "_fix.pdf")))
+    rep_q = shlex.quote(str(full.with_name(full.stem + "_repaired.pdf")))
+    repair_sh = shlex.quote(str(here / "repair-pdf.sh"))
+    check_pdf_sh = shlex.quote(str(here / "check-pdf.sh"))
 
+    # 0. Повреждённая структура: страницы в разных программах считаются по-разному
+    if structure_bad:
+        verdict = "ФАЙЛ ПОВРЕЖДЁН: структура страниц нарушена"
+        parts = []
+        if insp_n is not None and insp_n != n:
+            parts.append(f"просмотрщик видит {n} страниц, индексатор {insp_n}: номера «стр.» в индексе и в читалке "
+                         f"будут расходиться (в этой книге разница нарастает по тексту)")
+        if missing:
+            parts.append(f"в файле нет объектов {len(missing)} страниц (потеряны безвозвратно): {', '.join(map(str, missing[:20]))}"
+                         + ("…" if len(missing) > 20 else ""))
+        notes.append("; ".join(parts) + ".")
+        actions.append(f"{repair_sh} {src_q} {rep_q}")
+        actions.append(f"{check_pdf_sh} {rep_q}   # повторите проверку на пересобранном файле")
+        notes.append("Пересборка выравнивает нумерацию и делает файл читаемым для всех программ, но потерянные страницы "
+                     "она не возвращает: их можно получить только из другой копии книги. Если потерь много, "
+                     "поищите другой источник.")
     # 1. Нет текстового слоя
-    if content and text_share < TEXT_SHARE_OK:
+    elif content and text_share < TEXT_SHARE_OK:
         no_text = [r["i"] + 1 for r in rows if r["kind"] in ("image", "vector")]
         kind = "векторные страницы (текст нарисован контурами)" if kinds["vector"] > kinds["image"] else "сканы"
         verdict = f"НУЖЕН OCR: текст есть только на {text_share:.0%} страниц, остальные: {kind}"
@@ -306,6 +337,10 @@ def main() -> int:
             verdict = "МОЖНО ИМПОРТИРОВАТЬ КАК ЕСТЬ"
 
     # Особенности
+    if damaged:
+        notes.append(f"Страницы с повреждённым содержимым (ошибки чтения потока, текст на них потерян или обрезан): "
+                     f"{', '.join(map(str, damaged[:20]))}" + ("…" if len(damaged) > 20 else "") + ". Исправить их нельзя: "
+                     "нужна другая копия книги.")
     if lay["sideways"]:
         notes.append(f"Повёрнуты боком около {lay['sideways']} из {lay['checked']} проверенных страниц: нужен "
                      "`--rotate-pages` при OCR; страницы с низкой уверенностью поворота проверьте глазами.")

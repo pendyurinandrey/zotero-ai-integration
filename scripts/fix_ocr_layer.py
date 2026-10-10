@@ -31,6 +31,9 @@ from pathlib import Path
 
 import pymupdf as fitz
 
+sys.path.insert(0, str(Path(__file__).parent))
+from _pdf_common import inspector_pages  # noqa: E402  (заодно отключает печать ошибок MuPDF)
+
 NUM = rb"-?\d+(?:\.\d+)?"
 TD = re.compile(rb"(" + NUM + rb")\s+(" + NUM + rb")\s+Td")
 FONT = re.compile(rb"(/F\d+) ([\d.]+) Tf")
@@ -113,6 +116,8 @@ def fidelity(path: str, truth_path: str):
         return {tuple(w[i:i + 3]) for i in range(len(w) - 2)}
 
     truth = [tri(words(p.get_text())) for p in fitz.open(truth_path)]
+    if inspector_pages(path) != len(truth):
+        return None  # страницы в просмотрщике и в индексаторе считаются по-разному: сравнивать постранично нельзя
     doc = extract_pdf(path)
     pages = [p if isinstance(p, str) else getattr(p, "markdown", str(p)) for p in doc.pages]
     r = [len(t & tri(words(x))) / len(t) for t, x in zip(truth, pages) if len(t) > 30]
@@ -172,6 +177,10 @@ def main() -> int:
     if args.check:
         before = fidelity(str(src), str(src))
         after = fidelity(str(dst), str(src))
+        if before is None or after is None:
+            print("Сравнение пропущено: просмотрщик и индексатор насчитали разное число страниц, файл повреждён. "
+                  "Сначала пересоберите его: scripts/repair-pdf.sh, затем повторите исправление слоя.")
+            return 0
         print("Сохранность текста для индексатора (доля трёхсловных последовательностей; 1,00 = без искажений):")
         print(f"  до:    {before[0]:.3f}, страниц ниже 0,9: {before[1]} из {before[2]}")
         print(f"  после: {after[0]:.3f}, страниц ниже 0,9: {after[1]} из {after[2]}")
