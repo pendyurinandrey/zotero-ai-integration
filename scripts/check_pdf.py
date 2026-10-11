@@ -21,13 +21,15 @@ import argparse
 import re
 import shlex
 import sys
+import tempfile
 from collections import Counter
 from pathlib import Path
 
 import pymupdf as fitz
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _pdf_common import inspector_pages, scan_pages  # noqa: E402  (заодно отключает печать ошибок MuPDF)
+from _pdf_common import (complete_tounicode, count_escaped_paren_pages, escape_parens, inspector_pages,  # noqa: E402
+                         scan_pages)  # импорт заодно отключает печать ошибок MuPDF
 
 STOP = set("и в на не что как это с по к из для от или а но то при его ее их он она они был была были быть также "
            "которые который которая the of and to in is that for with on as are by be this from".split())
@@ -181,6 +183,35 @@ def indexer_read(path, doc, rows):
     }
 
 
+def trial_repair_fidelity(path, parens, tounicode):
+    """Применяет исправления (скобки, карты ToUnicode) к временной копии и возвращает сохранность текста после них."""
+    try:
+        doc = fitz.open(str(path))
+        changed = 0
+        if parens:
+            changed += escape_parens(doc)[0]
+        if tounicode:
+            changed += complete_tounicode(doc)[1]
+        if not changed:
+            return None
+        with tempfile.TemporaryDirectory() as tmp:
+            out = str(Path(tmp) / "trial.pdf")
+            doc.save(out, garbage=3, deflate=True)
+            return indexer_read(out, fitz.open(out), None)["fidelity"]
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def repair_causes(esc_pages, esc_many, gap_fonts):
+    """Описание исправимых причин для вывода."""
+    parts = []
+    if esc_many:
+        parts.append(f"экранированные скобки в строках текста на {esc_pages} страницах (индексатор обрывает на них разбор страницы)")
+    if gap_fonts:
+        parts.append(f"неполные карты ToUnicode у {gap_fonts} шрифтов (дефисы, тире, кавычки пропадают: «Блок-схема» -> «Блоксхема»)")
+    return "; ".join(parts)
+
+
 def garbled_meta(meta: dict) -> list:
     bad = []
     for k in ("title", "author"):
@@ -220,6 +251,9 @@ def main() -> int:
         return 2
 
     missing, damaged = scan_pages(doc)
+    esc_pages = count_escaped_paren_pages(doc)
+    esc_many = esc_pages >= 3 and esc_pages >= 0.05 * n
+    gap_fonts, _ = complete_tounicode(doc, dry_run=True)
     insp_n = None
     if not args.no_indexer:
         try:
@@ -254,10 +288,12 @@ def main() -> int:
     fix_sh = shlex.quote(str(here / "fix-ocr-layer.sh"))      # чтобы их можно было вставить из любой папки
     check_sh = shlex.quote(str(here / "check-text-layer.sh"))
     src_q = shlex.quote(str(full))
-    ocr_q = shlex.quote(str(full.with_name(full.stem + "_ocr.pdf")))
-    fix_q = shlex.quote(str(full.with_name(full.stem + "_ocr_fix.pdf")))
-    fixed_q = shlex.quote(str(full.with_name(full.stem + "_fix.pdf")))
-    rep_q = shlex.quote(str(full.with_name(full.stem + "_repaired.pdf")))
+    # результат кладём рядом с исходным, но не в хранилище Zotero (storage): его файлы Zotero ведёт сам
+    out_dir = Path.home() / "Downloads" if "Zotero/storage" in str(full) else full.parent
+    ocr_q = shlex.quote(str(out_dir / (full.stem + "_ocr.pdf")))
+    fix_q = shlex.quote(str(out_dir / (full.stem + "_ocr_fix.pdf")))
+    fixed_q = shlex.quote(str(out_dir / (full.stem + "_fix.pdf")))
+    rep_q = shlex.quote(str(out_dir / (full.stem + "_repaired.pdf")))
     repair_sh = shlex.quote(str(here / "repair-pdf.sh"))
     check_pdf_sh = shlex.quote(str(here / "check-pdf.sh"))
 
@@ -304,15 +340,32 @@ def main() -> int:
               f"сохранность текста {ix['fidelity']:.3f}, страниц ниже {FIDELITY_OK}: {ix['low_pages']} из {ix['checked']}"
               if ix["fidelity"] is not None else
               f"Индексатор: страниц без текста по его мнению {ix['needs_ocr']}, страниц-«таблиц» {ix['pipe_pages']}")
-        if ix["needs_ocr"] > 0.5 * n:
+        ft_cache = path.parent / ".zotero-ft-cache"
+        if ix["needs_ocr"] > 0.5 * n and ft_cache.exists() and ft_cache.stat().st_size > 1000:
+            verdict = "МОЖНО ИМПОРТИРОВАТЬ: индексатор не читает слой файла, но возьмёт текст из кэша Zotero"
+            notes.append("Невидимый текст файла индексатор не читает (типично для PDF/A и старых сканов с готовым OCR), "
+                         "но Zotero уже проиндексировал файл у себя (есть .zotero-ft-cache), и zotero-mcp берёт текст "
+                         "оттуда: он плоский, но с номерами страниц. Качество определяет Zotero. Если нужен свой текст, "
+                         "пересоберите файл из исходного скана через ocrmypdf с `--output-type pdf` и fix-ocr-layer.sh.")
+        elif ix["needs_ocr"] > 0.5 * n:
             verdict = "ИНДЕКСАТОР НЕ ВИДИТ ТЕКСТ, хотя в просмотрщике он есть"
-            notes.append("Типичная причина: PDF/A (Ghostscript переписал слой). Пересоберите из исходного скана с "
-                         "`--output-type pdf`.")
-            actions.append(f"ocrmypdf -l rus+eng --skip-text --output-type pdf <исходный_скан.pdf> {ocr_q}")
+            notes.append("Типичная причина: PDF/A (Ghostscript переписал слой) или невидимый текст старого OCR. Если файл "
+                         "ещё не в библиотеке Zotero, индексатор не получит текста совсем (у Zotero нет своего кэша). "
+                         "Пересоберите из исходного скана с `--output-type pdf`.")
+            actions.append(f'ocrmypdf -l rus+eng --skip-text --output-type pdf <исходный_скан.pdf> {ocr_q}')
             actions.append(f"{fix_sh} {ocr_q} {fix_q} --check")
         elif ix["fidelity"] is not None and ix["fidelity"] < FIDELITY_OK:
             verdict = "ИНДЕКСАТОР ИСКАЖАЕТ ТЕКСТ (слова теряются или переставляются)"
-            if lay["ocr_unfixed"]:
+            trial = trial_repair_fidelity(path, esc_many, gap_fonts > 0) if (esc_many or gap_fonts) else None
+            if trial is not None and ix["fidelity"] is not None and trial > ix["fidelity"] + 0.05:
+                actions.append(f"{repair_sh} {src_q} {rep_q}")
+                notes.append(f"Причина: {repair_causes(esc_pages, esc_many, gap_fonts)}. Просмотрщики такой текст читают "
+                             f"верно, индексатор нет. Проверка на временной копии: сохранность {ix['fidelity']:.3f} -> "
+                             f"{trial:.3f}. repair-pdf.sh исправляет это, не меняя вид страниц.")
+                if lay["ocr_unfixed"]:
+                    notes.append("В файле есть и ещё не исправленный слой ocrmypdf: после ремонта запустите "
+                                 f"{fix_sh} {rep_q} {fix_q} --check.")
+            elif lay["ocr_unfixed"]:
                 actions.append(f"{fix_sh} {src_q} {fixed_q} --check")
                 notes.append("Причина: текстовый слой ocrmypdf (найден на проверенных страницах, ещё не исправлен).")
             elif lay["ocr_fixed"]:
@@ -324,13 +377,20 @@ def main() -> int:
                              "их за линейки таблицы. Скрипта очистки в репозитории пока нет: полосы удаляются из потока "
                              "содержимого страниц (операторы `1 g ... re f`) без изменения вида страницы.")
             else:
-                notes.append("Причина не определена. Запасной вариант: добавить к карточке `.txt` с текстом (без номеров "
-                             "страниц) и положиться на него.")
+                notes.append("Причина не определена. Если в статье много таблиц, оценка занижена: индексатор выводит их "
+                             "как таблицы, склеивая слова в ячейках («Careeroutcomes»), а метрика сравнивает порядок "
+                             "слов. Проверьте поиском знакомую фразу из основного текста и из таблицы. Запасной вариант: "
+                             "добавить к карточке `.txt` с текстом (без номеров страниц).")
         elif ix["fidelity"] is not None and (ix["fidelity"] < FIDELITY_GOOD or ix["low_pages"] > LOW_PAGES_SHARE * ix["checked"]):
             verdict = "МОЖНО ИМПОРТИРОВАТЬ, НО С ОГРАНИЧЕНИЯМИ: часть страниц индексатор читает с искажениями"
             notes.append(f"Страниц с искажениями: {ix['low_pages']} из {ix['checked']}. Чаще всего это оглавление, таблицы, "
                          "списки литературы и строки с большими пробелами. Для проверки найдите поиском знакомую фразу "
                          "с такой страницы.")
+            trial = trial_repair_fidelity(path, esc_many, gap_fonts > 0) if (esc_many or gap_fonts) else None
+            if trial is not None and ix["fidelity"] is not None and trial > ix["fidelity"] + 0.015:
+                actions.append(f"{repair_sh} {src_q} {rep_q}")
+                notes.append(f"Часть искажений исправима: {repair_causes(esc_pages, esc_many, gap_fonts)}. Проверка на "
+                             f"временной копии: сохранность {ix['fidelity']:.3f} -> {trial:.3f}.")
             if lay["ocr_unfixed"]:
                 actions.append(f"{fix_sh} {src_q} {fixed_q} --check")
         else:

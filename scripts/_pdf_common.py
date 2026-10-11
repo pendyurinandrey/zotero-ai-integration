@@ -43,3 +43,164 @@ def inspector_pages(path) -> int:
     """Сколько страниц видит индексатор (pdf-inspector)."""
     import pdf_inspector
     return pdf_inspector.classify_pdf(str(path)).page_count
+
+
+# --- Экранированные скобки в строках текста ---------------------------------------------------------------
+# Индексатор (pdf-inspector) обрывает разбор страницы на `\(` или `\)` внутри строки. Просмотрщики читают такой
+# текст правильно, поэтому PyMuPDF ошибки не видит. Замена на восьмеричные коды \050 и \051 по стандарту
+# равнозначна, но индексатор её читает.
+import re  # noqa: E402
+
+INLINE_IMAGE = re.compile(rb"(?<![\w/])BI(?=\s)")
+
+
+def escape_parens_in_stream(s: bytes):
+    """Заменяет скобки внутри строк в скобках (экранированные и вложенные) на \\050 и \\051.
+
+    Возвращает (новый поток, число замен). Строки в `<...>` и комментарии не затрагиваются."""
+    out = bytearray()
+    i, n, changed = 0, len(s), 0
+    while i < n:
+        c = s[i:i + 1]
+        if c == b"(":
+            j, depth, buf = i + 1, 1, bytearray(b"(")
+            while j < n and depth:
+                b = s[j:j + 1]
+                if b == b"\\":
+                    nxt = s[j + 1:j + 2]
+                    if nxt in (b"(", b")"):
+                        buf += b"\\050" if nxt == b"(" else b"\\051"
+                        changed += 1
+                    else:
+                        buf += s[j:j + 2]
+                    j += 2
+                    continue
+                if b == b"(":
+                    depth += 1
+                    buf += b"\\050"
+                    changed += 1
+                elif b == b")":
+                    depth -= 1
+                    if depth:
+                        buf += b"\\051"
+                        changed += 1
+                    else:
+                        buf += b")"
+                else:
+                    buf += b
+                j += 1
+            out += buf
+            i = j
+            continue
+        if c == b"%":  # комментарий до конца строки
+            k = s.find(b"\n", i)
+            k = n if k < 0 else k
+            out += s[i:k]
+            i = k
+            continue
+        out += c
+        i += 1
+    return bytes(out), changed
+
+
+def count_escaped_paren_pages(doc, pages=None) -> int:
+    """Сколько из страниц (всех или переданных номеров с 0) содержат `\\(` или `\\)` в потоке содержимого."""
+    cnt = 0
+    for i in (pages if pages is not None else range(len(doc))):
+        try:
+            for x in doc[i].get_contents():
+                s = doc.xref_stream(x) or b""
+                if (b"\\(" in s or b"\\)" in s) and not INLINE_IMAGE.search(s):
+                    cnt += 1
+                    break
+        except Exception:  # noqa: BLE001
+            continue
+    return cnt
+
+
+def escape_parens(doc):
+    """Исправляет потоки содержимого всех страниц. Возвращает (число замен, пропущено потоков со встроенными картинками)."""
+    total = skipped = 0
+    for page in doc:
+        for x in page.get_contents():
+            s = doc.xref_stream(x)
+            if s is None or not (b"\\(" in s or b"\\)" in s):
+                continue
+            if INLINE_IMAGE.search(s):  # двоичные данные картинки: безопасно разбирать нельзя
+                skipped += 1
+                continue
+            s2, k = escape_parens_in_stream(s)
+            if k:
+                doc.update_stream(x, s2)
+                total += k
+    return total, skipped
+
+
+# --- Неполные карты ToUnicode ---------------------------------------------------------------------------
+# У части Type1/TrueType-шрифтов в кодировке (Differences) есть имена глифов для всех кодов, а в ToUnicode часть
+# кодов пропущена (чаще всего дефис, тире, кавычки, иногда отдельные буквы). PyMuPDF тогда выдаёт управляющий
+# символ, а индексатор теряет знак совсем: «Блок-схема» превращается в «Блоксхема», «6-й» в «6й». Недостающие
+# коды достраиваются по имени глифа (таблица имён ниже: латиница, знаки, кириллица afii100xx, uniXXXX).
+NAMES = {'space':0x20,'exclam':0x21,'quotedbl':0x22,'numbersign':0x23,'dollar':0x24,'percent':0x25,'ampersand':0x26,
+ 'quotesingle':0x27,'parenleft':0x28,'parenright':0x29,'asterisk':0x2A,'plus':0x2B,'comma':0x2C,'hyphen':0x2D,
+ 'hyphenminus':0x2D,'period':0x2E,'slash':0x2F,'colon':0x3A,'semicolon':0x3B,'less':0x3C,'equal':0x3D,'greater':0x3E,
+ 'question':0x3F,'at':0x40,'bracketleft':0x5B,'backslash':0x5C,'bracketright':0x5D,'underscore':0x5F,'braceleft':0x7B,
+ 'bar':0x7C,'braceright':0x7D,'asciitilde':0x7E,'endash':0x2013,'emdash':0x2014,'quoteleft':0x2018,'quoteright':0x2019,
+ 'quotedblleft':0x201C,'quotedblright':0x201D,'quotedblbase':0x201E,'quotesinglbase':0x201A,'bullet':0x2022,
+ 'ellipsis':0x2026,'guillemotleft':0xAB,'guillemotright':0xBB,'section':0xA7,'degree':0xB0,'plusminus':0xB1,
+ 'multiply':0xD7,'nbspace':0xA0,'sfthyphen':0xAD,'copyright':0xA9,'registered':0xAE,'trademark':0x2122,'minus':0x2212,
+ 'fi':0xFB01,'fl':0xFB02,'dagger':0x2020,'paragraph':0xB6,'afii61352':0x2116,'numero':0x2116,'percent':0x25,
+ 'zero':0x30,'one':0x31,'two':0x32,'three':0x33,'four':0x34,'five':0x35,'six':0x36,'seven':0x37,'eight':0x38,'nine':0x39,
+ 'afii10023':0x401,'afii10071':0x451}
+def glyph_to_unicode(n):
+    if n in NAMES: return NAMES[n]
+    if len(n)==1 and n.isalpha(): return ord(n)
+    m=re.fullmatch(r'afii(\d+)',n)
+    if m:
+        v=int(m.group(1))
+        if 10017<=v<=10022: return 0x410+v-10017
+        if 10024<=v<=10049: return 0x416+v-10024
+        if 10065<=v<=10070: return 0x430+v-10065
+        if 10072<=v<=10097: return 0x436+v-10072
+    m=re.fullmatch(r'uni([0-9A-Fa-f]{4})',n)
+    if m: return int(m.group(1),16)
+    return None
+def parse_differences(s):
+    out={}; code=None
+    for tok in re.findall(r'/[^\s/\[\]]+|\d+',s):
+        if tok[0]=='/':
+            if code is not None: out[code]=tok[1:]; code+=1
+        else: code=int(tok)
+    return out
+def covered(cmap):
+    cov=set()
+    for a,b,_ in re.findall(r'<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>\s*(<[0-9a-fA-F]+>|\[[^\]]*\])',cmap):
+        cov.update(range(int(a,16),int(b,16)+1))
+    for m in re.finditer(r'beginbfchar(.*?)endbfchar',cmap,re.S):
+        for a in re.findall(r'<([0-9a-fA-F]+)>\s*<[0-9a-fA-F]+>',m.group(1)): cov.add(int(a,16))
+    return cov
+def complete_tounicode(doc, dry_run=False):
+    fixed=added=0
+    for xr in range(1,doc.xref_length()):
+        try:
+            if doc.xref_get_key(xr,'Type')[1]!='/Font' or doc.xref_get_key(xr,'Subtype')[1] not in ('/Type1','/TrueType'): continue
+            tu=doc.xref_get_key(xr,'ToUnicode')
+            if tu[0]!='xref': continue
+            enc=doc.xref_get_key(xr,'Encoding')
+            if enc[0]=='xref': eo=doc.xref_object(int(enc[1].split()[0]))
+            elif enc[0]=='dict': eo=enc[1]
+            else: continue
+            if 'Differences' not in eo: continue
+            diff=parse_differences(eo[eo.index('Differences'):])
+            n=int(tu[1].split()[0]); cmap=doc.xref_stream(n).decode('latin1')
+            cov=covered(cmap)
+            new=[(c,glyph_to_unicode(g)) for c,g in diff.items() if c not in cov and glyph_to_unicode(g)]
+            if not new: continue
+            if dry_run:
+                fixed+=1; added+=len(new); continue
+            block=f'{len(new)} beginbfchar\n'+''.join(f'<{c:02x}> <{u:04X}>\n' for c,u in new)+'endbfchar\n'
+            i=cmap.rfind('endcmap')
+            if i<0: continue
+            doc.update_stream(n,(cmap[:i]+block+cmap[i:]).encode('latin1')); fixed+=1; added+=len(new)
+        except Exception: continue
+    return fixed,added
