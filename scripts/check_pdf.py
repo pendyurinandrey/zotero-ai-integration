@@ -28,8 +28,8 @@ from pathlib import Path
 import pymupdf as fitz
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _pdf_common import (complete_tounicode, count_escaped_paren_pages, escape_parens, inspector_pages,  # noqa: E402
-                         scan_pages)  # импорт заодно отключает печать ошибок MuPDF
+from _pdf_common import (complete_tounicode, count_escaped_paren_pages, escape_parens, find_running_text,  # noqa: E402
+                         inspector_pages, scan_pages)  # импорт заодно отключает печать ошибок MuPDF
 
 STOP = set("и в на не что как это с по к из для от или а но то при его ее их он она они был была были быть также "
            "которые который которая the of and to in is that for with on as are by be this from".split())
@@ -373,9 +373,10 @@ def main() -> int:
                              "таблицами или строками с большими пробелами. Запасной вариант: `.txt` с текстом к карточке "
                              "(без номеров страниц).")
             elif lay["white_boxes"] > 0.3 * lay["checked"]:
+                actions.append(f"{repair_sh} {src_q} {rep_q}")
                 notes.append("Причина: под каждой строкой лежит невидимая белая закрашенная полоса, и индексатор принимает "
-                             "их за линейки таблицы. Скрипта очистки в репозитории пока нет: полосы удаляются из потока "
-                             "содержимого страниц (операторы `1 g ... re f`) без изменения вида страницы.")
+                             "их за линейки таблицы. repair-pdf.sh удаляет полосы из потока содержимого страниц "
+                             "(вид страницы не меняется).")
             else:
                 notes.append("Причина не определена. Если в статье много таблиц, оценка занижена: индексатор выводит их "
                              "как таблицы, склеивая слова в ячейках («Careeroutcomes»), а метрика сравнивает порядок "
@@ -391,11 +392,21 @@ def main() -> int:
                 actions.append(f"{repair_sh} {src_q} {rep_q}")
                 notes.append(f"Часть искажений исправима: {repair_causes(esc_pages, esc_many, gap_fonts)}. Проверка на "
                              f"временной копии: сохранность {ix['fidelity']:.3f} -> {trial:.3f}.")
+            if lay["white_boxes"] > 0.3 * lay["checked"]:
+                actions.append(f"{repair_sh} {src_q} {rep_q}")
+                notes.append("Причина искажений: под каждой строкой лежит невидимая белая закрашенная полоса, и индексатор "
+                             "принимает их за линейки таблицы. repair-pdf.sh удаляет полосы (вид страницы не меняется).")
             if lay["ocr_unfixed"]:
                 actions.append(f"{fix_sh} {src_q} {fixed_q} --check")
         else:
             verdict = "МОЖНО ИМПОРТИРОВАТЬ КАК ЕСТЬ"
 
+    # Колонтитулы и штампы: повторяются на большинстве страниц и попадают в индекс шумом
+    running = find_running_text(doc, pages=idx)
+    if running:
+        sample = "; ".join(f"«{t[:50]}»" for t in list(running)[:3])
+        notes.append(f"Повторяющиеся колонтитулы или штампы у краёв страниц ({len(running)}): {sample}. В индексе это шум, "
+                     f"одинаковый на каждой странице. Удалить: {repair_sh} {src_q} {rep_q} --strip-running-heads")
     # Особенности
     if damaged:
         notes.append(f"Страницы с повреждённым содержимым (ошибки чтения потока, текст на них потерян или обрезан): "

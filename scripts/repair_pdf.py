@@ -18,6 +18,13 @@
    часть кодов пропущена (чаще всего дефис, тире, кавычки). Индексатор теряет такие знаки: «Блок-схема»
    превращается в «Блоксхема», «6-й» в «6й». Недостающие коды достраиваются по именам глифов.
 
+4. Белые подложки под строками. У некоторых PDF под каждой строкой лежит невидимая белая закрашенная полоса,
+   индексатор принимает стопку полос за линейки таблицы и перемешивает текст страницы. Полосы удаляются из
+   потока содержимого (вид страницы не меняется).
+5. Колонтитулы и штампы (только по запросу, --strip-running-heads). Тексты у верхнего и нижнего краёв, которые
+   повторяются на большинстве страниц и содержат не меньше 3 букв (штамп электронной библиотеки, название книги), удаляются:
+   в индексе они шум, одинаковый на каждой странице. Номера страниц не трогаются.
+
 Если файл ни в чём из этого не нуждается, выходной файл не создаётся. --rebuild, --escape-parens и --fix-tounicode
 принудительно включают шаг, --no-escape-parens и --no-fix-tounicode отключают. Исходный файл не изменяется.
 Запускается через repair-pdf.sh.
@@ -31,8 +38,9 @@ from pathlib import Path
 import pymupdf as fitz
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _pdf_common import (complete_tounicode, count_escaped_paren_pages, escape_parens, inspector_pages,  # noqa: E402
-                         is_damaged, is_missing_page, scan_pages)
+from _pdf_common import (complete_tounicode, count_escaped_paren_pages, count_white_box_pages, escape_parens,  # noqa: E402
+                         find_running_text, inspector_pages, is_damaged, is_missing_page, scan_pages, strip_running_text,
+                         strip_white_boxes)
 
 
 def parse_args():
@@ -44,6 +52,12 @@ def parse_args():
     ap.add_argument("--no-escape-parens", action="store_true", help="не исправлять скобки в строках")
     ap.add_argument("--fix-tounicode", action="store_true", help="достроить карты ToUnicode, даже если пропусков не найдено")
     ap.add_argument("--no-fix-tounicode", action="store_true", help="не достраивать карты ToUnicode")
+    ap.add_argument("--strip-white-boxes", action="store_true", help="удалить белые подложки, даже если не найдены")
+    ap.add_argument("--no-strip-white-boxes", action="store_true", help="не удалять белые подложки")
+    ap.add_argument("--strip-running-heads", action="store_true",
+                    help="удалить повторяющиеся колонтитулы и штампы у краёв страниц (по умолчанию не удаляются)")
+    ap.add_argument("--title", help="записать название в метаданные файла")
+    ap.add_argument("--author", help="записать автора в метаданные файла")
     ap.add_argument("--drop-missing", action="store_true",
                     help="при пересборке удалить потерянные страницы вместо замены пустыми (нумерация сдвинется)")
     ap.add_argument("--force", action="store_true", help="перезаписать output, если он уже есть")
@@ -115,7 +129,13 @@ def main() -> int:
     gap_fonts, _ = complete_tounicode(doc, dry_run=True)
     do_tounicode = (args.fix_tounicode or gap_fonts > 0) and not args.no_fix_tounicode
 
-    if not do_rebuild and not do_escape and not do_tounicode:
+    white_pages = count_white_box_pages(doc, range(0, len(doc), max(1, len(doc) // 40)))
+    sampled = len(range(0, len(doc), max(1, len(doc) // 40)))
+    do_white = (args.strip_white_boxes or white_pages > 0.3 * sampled) and not args.no_strip_white_boxes
+    running = find_running_text(doc) if args.strip_running_heads else {}
+    do_meta = bool(args.title or args.author)
+
+    if not do_rebuild and not do_escape and not do_tounicode and not do_white and not running and not do_meta:
         print("Ремонт не нужен: структура страниц в порядке, экранированных скобок в строках почти нет, карты "
               "ToUnicode полные. Выход не создан.")
         return 0
@@ -125,6 +145,19 @@ def main() -> int:
     if do_rebuild:
         doc, missing, damaged, failed = rebuild(doc, args.drop_missing)
         done.append(f"страницы пересобраны (было {len(fitz.open(str(src_p)))}, стало {len(doc)})")
+    if do_white:                      # до всего остального: MuPDF при редактировании переписывает потоки
+        done.append(f"удалено белых подложек: {strip_white_boxes(doc)}")
+    if running:
+        done.append(f"удалено колонтитулов и штампов: {strip_running_text(doc, set(running))} "
+                    f"(повторяющихся текстов: {len(running)})")
+    if do_meta:
+        meta = dict(doc.metadata or {})
+        if args.title:
+            meta["title"] = args.title
+        if args.author:
+            meta["author"] = args.author
+        doc.set_metadata(meta)
+        done.append("обновлены метаданные файла")
     if do_escape:
         total, skipped = escape_parens(doc)
         done.append(f"заменено скобок в строках: {total}" + (f" (потоков со встроенными картинками пропущено: {skipped})" if skipped else ""))
@@ -132,7 +165,8 @@ def main() -> int:
     if do_tounicode:
         fonts, codes = complete_tounicode(doc)
         done.append(f"достроены карты ToUnicode: шрифтов {fonts}, кодов {codes}")
-    doc.save(str(dst_p), garbage=4, deflate=True, deflate_fonts=True, deflate_images=True)
+    doc.save(str(dst_p), garbage=4, deflate=True, deflate_fonts=True, deflate_images=True,
+             encryption=fitz.PDF_ENCRYPT_NONE)   # шифрование с пустым паролем снимается: иначе результат не откроется индексатором
 
     print(f"Записано: {dst_p}  (размер {src_p.stat().st_size / 1e6:.1f} -> {dst_p.stat().st_size / 1e6:.1f} МБ)")
     for d in done:

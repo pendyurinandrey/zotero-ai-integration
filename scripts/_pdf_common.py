@@ -204,3 +204,94 @@ def complete_tounicode(doc, dry_run=False):
             doc.update_stream(n,(cmap[:i]+block+cmap[i:]).encode('latin1')); fixed+=1; added+=len(new)
         except Exception: continue
     return fixed,added
+
+
+# --- Белые подложки под строками и повторяющиеся колонтитулы ----------------------------------------------
+# Некоторые PDF (например, из электронных библиотек) хранят под каждой строкой невидимую белую закрашенную
+# полосу `1 g x y w h re f`. Для глаза она незаметна, а индексатор принимает стопку одинаковых полос за линейки
+# таблицы, и текст страницы перемешивается. Полосы удаляются из потока содержимого (вид страницы не меняется).
+WHITE_BOX = re.compile(rb"(?:(?<=\n)|^)(?:1 g|1 1 1 rg)\s+-?[\d.]+ -?[\d.]+ -?[\d.]+ -?[\d.]+ re\s+f\s*\n?")
+
+
+def count_white_box_pages(doc, pages=None) -> int:
+    """Сколько из страниц (всех или переданных номеров с 0) содержат не меньше 5 белых закрашенных полос."""
+    cnt = 0
+    for i in (pages if pages is not None else range(len(doc))):
+        try:
+            found = sum(len(WHITE_BOX.findall(doc.xref_stream(x) or b"")) for x in doc[i].get_contents())
+        except Exception:  # noqa: BLE001
+            continue
+        cnt += found >= 5
+    return cnt
+
+
+def strip_white_boxes(doc) -> int:
+    """Удаляет белые закрашенные полосы из потоков содержимого страниц. Возвращает число удалённых."""
+    removed = 0
+    for page in doc:
+        for x in page.get_contents():
+            s = doc.xref_stream(x)
+            if s is None:
+                continue
+            s2, k = WHITE_BOX.subn(b"", s)
+            if k:
+                doc.update_stream(x, s2)
+                removed += k
+    return removed
+
+
+def _normalize_running(text: str) -> str:
+    return re.sub(r"\d+", "#", re.sub(r"\s+", " ", text)).strip()
+
+
+def _running_candidate(raw: str) -> bool:
+    """Годится для удаления как колонтитул: не меньше 3 букв либо только знаки препинания (разделитель «||»).
+    Номера страниц (цифры) не годятся."""
+    raw = raw.strip()
+    return sum(c.isalpha() for c in raw) >= 3 or (len(raw) >= 2 and not any(c.isalnum() for c in raw))
+
+
+def find_running_text(doc, band=0.08, min_share=0.5, pages=None):
+    """Тексты у верхнего и нижнего краёв, которые повторяются на большинстве страниц (колонтитулы, штампы скана).
+
+    Номера страниц (одни цифры) не считаются. Возвращает {нормализованный текст: число страниц}. pages это
+    номера страниц с 0 для выборочной проверки (по умолчанию все)."""
+    counts = {}
+    idx = list(pages) if pages is not None else list(range(len(doc)))
+    n = len(idx)
+    for i in idx:
+        page = doc[i]
+        h = page.rect.height
+        seen = set()
+        for b in page.get_text("dict")["blocks"]:
+            for ln in b.get("lines", []):
+                for s in ln["spans"]:
+                    y0, y1 = s["bbox"][1], s["bbox"][3]
+                    norm = _normalize_running(s["text"])
+                    if (y1 < band * h or y0 > (1 - band) * h) and _running_candidate(s["text"]):
+                        seen.add(norm)
+        for norm in seen:
+            counts[norm] = counts.get(norm, 0) + 1
+    return {t: c for t, c in counts.items() if c >= min_share * n and c >= 3}
+
+
+def strip_running_text(doc, texts, band=0.08) -> int:
+    """Удаляет у краёв страниц спаны с заданным (нормализованным) текстом. Возвращает число удалённых спанов."""
+    removed = 0
+    for page in doc:
+        h = page.rect.height
+        rects = []
+        for b in page.get_text("dict")["blocks"]:
+            for ln in b.get("lines", []):
+                for s in ln["spans"]:
+                    y0, y1 = s["bbox"][1], s["bbox"][3]
+                    if ((y1 < band * h or y0 > (1 - band) * h) and _running_candidate(s["text"])
+                            and _normalize_running(s["text"]) in texts):
+                        rects.append(fitz.Rect(s["bbox"]))
+        for r in rects:
+            page.add_redact_annot(r + (-1, -1, 1, 1))
+        if rects:
+            page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE, graphics=fitz.PDF_REDACT_LINE_ART_NONE,
+                                  text=fitz.PDF_REDACT_TEXT_REMOVE)
+            removed += len(rects)
+    return removed
