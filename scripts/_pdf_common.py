@@ -289,9 +289,13 @@ def strip_running_text(doc, texts, band=0.08) -> int:
                             and _normalize_running(s["text"]) in texts):
                         rects.append(fitz.Rect(s["bbox"]))
         for r in rects:
-            page.add_redact_annot(r + (-1, -1, 1, 1))
+            page.add_redact_annot(r + (-1, -1, 1, 3))     # запас снизу: подчёркивание ссылки лежит под текстом
         if rects:
-            page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE, graphics=fitz.PDF_REDACT_LINE_ART_NONE,
+            # ссылки, висящие на удаляемом тексте (адрес сайта из штампа), остались бы пустыми рамками
+            for link in page.get_links():
+                if any(fitz.Rect(link["from"]).intersects(r) for r in rects):
+                    page.delete_link(link)
+            page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE, graphics=fitz.PDF_REDACT_LINE_ART_REMOVE_IF_COVERED,
                                   text=fitz.PDF_REDACT_TEXT_REMOVE)
             removed += len(rects)
     return removed
