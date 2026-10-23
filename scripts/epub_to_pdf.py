@@ -8,8 +8,14 @@ PyMuPDF, переносит оглавление в закладки PDF и за
 все авторы, издательство).
 
 Номера страниц в получившемся PDF свои, а не книжные: в индексе «стр.» будет страницей этого PDF. Если важны
-печатные страницы, используйте PDF-версию книги. Картинки, таблицы и листинги переносятся так, как их
-показывает просмотрщик EPUB; сложную вёрстку (колонки, плавающие врезки) стоит проверить глазами.
+печатные страницы, используйте PDF-версию книги.
+
+Известное ограничение. Движок раскладки PyMuPDF (MuPDF) не вписывает картинки в страницу: слишком высокая
+картинка выходит за нижний край и обрезается, а текст местами налезает на картинку (на проверенной книге с 118
+рисунками обрезано 14 картинок, на 89 страницах из 274 текст пересекается с картинкой; смена размера страницы
+и шрифта этого не устраняет). Скрипт после раскладки считает такие случаи и предупреждает. Для поиска нужен
+текст, а не рисунки, поэтому есть режим --text-only: картинки убираются (остаётся их подпись alt в квадратных
+скобках), и вёрстка получается чистой.
 
 Запускается через epub-to-pdf.sh. Исходный файл не изменяется.
 
@@ -39,6 +45,8 @@ def parse_args():
     ap.add_argument("--fontsize", type=float, default=10.5, help="размер основного шрифта в pt (по умолчанию 10,5)")
     ap.add_argument("--title", help="название для метаданных (по умолчанию из EPUB)")
     ap.add_argument("--author", help="автор(ы) для метаданных (по умолчанию из EPUB)")
+    ap.add_argument("--text-only", action="store_true",
+                    help="убрать картинки (останется подпись alt): без обрезанных рисунков и наложений текста")
     ap.add_argument("--force", action="store_true", help="перезаписать output, если он уже есть")
     return ap.parse_args()
 
@@ -60,6 +68,41 @@ def read_opf(path: Path) -> dict:
     except Exception:  # noqa: BLE001
         pass  # метаданные необязательны: возьмём то, что отдаёт PyMuPDF
     return info
+
+
+def strip_images(src: Path) -> bytes:
+    """Копия EPUB без тегов <img> и <svg>: вместо картинки остаётся её подпись alt в квадратных скобках."""
+    import io
+    out = io.BytesIO()
+    with zipfile.ZipFile(src) as zin, zipfile.ZipFile(out, "w") as zout:
+        for info in zin.infolist():
+            data = zin.read(info.filename)
+            if info.filename.lower().endswith((".xhtml", ".html", ".htm")):
+                html = data.decode("utf-8", errors="replace")
+                html = re.sub(r"<svg\b.*?</svg>", "", html, flags=re.S)
+                html = re.sub(r"<img\b[^>]*?alt=\"([^\"]*)\"[^>]*>",
+                              lambda m: f"[{m.group(1)}]" if m.group(1).strip() and "/" not in m.group(1) else "", html)
+                html = re.sub(r"<img\b[^>]*>", "", html)
+                data = html.encode("utf-8")
+            zout.writestr(info, data, compress_type=zipfile.ZIP_STORED if info.filename == "mimetype"
+                          else zipfile.ZIP_DEFLATED)
+    return out.getvalue()
+
+
+def layout_problems(pdf):
+    """Сколько картинок вышло за край страницы и на скольких страницах текст пересекается с картинкой."""
+    cut, overlapped, images = 0, 0, 0
+    for page in pdf:
+        boxes = [fitz.Rect(im["bbox"]) for im in page.get_image_info()]
+        images += len(boxes)
+        full = page.rect
+        cut += sum(1 for b in boxes if b.x1 > full.width + 1 or b.x0 < -1 or b.y1 > full.height + 1 or b.y0 < -1)
+        for blk in page.get_text("blocks"):
+            r = fitz.Rect(blk[:4])
+            if r.get_area() > 0 and any((r & b).get_area() > 0.3 * r.get_area() for b in boxes):
+                overlapped += 1
+                break
+    return images, cut, overlapped
 
 
 def fix_toc(toc):
@@ -88,7 +131,7 @@ def main() -> int:
         print("Это не EPUB (файл не является архивом).", file=sys.stderr)
         return 2
     try:
-        book = fitz.open(str(src))
+        book = fitz.open("epub", stream=strip_images(src)) if args.text_only else fitz.open(str(src))
     except Exception as e:  # noqa: BLE001
         print(f"Файл не открывается: {e}", file=sys.stderr)
         return 2
@@ -119,6 +162,11 @@ def main() -> int:
           f"страница {args.width:g}x{args.height:g} pt, шрифт {args.fontsize:g} pt)")
     print(f"Название: {title}")
     print(f"Авторы: {author or 'не указаны'}")
+    images, cut, overlapped = layout_problems(pdf)
+    if images and (cut or overlapped):
+        print(f"Внимание: вёрстка с рисунками неидеальна: из {images} картинок {cut} обрезаны краем страницы, "
+              f"на {overlapped} страницах текст пересекается с картинкой. Для поиска это не важно (текст на месте), "
+              "а чистую вёрстку без рисунков даёт --text-only.")
     if not letters:
         print("Внимание: в PDF нет текста (в EPUB могут быть только картинки страниц): понадобится OCR.")
     elif len(pdf) < 0.2 * epub_pages:
