@@ -174,10 +174,15 @@ def parse_differences(s):
     return out
 def covered(cmap):
     cov=set()
+    # Нужны только однобайтовые коды (шрифты с Differences простые). Диапазоны вида <00000000> <FFFFFFFF> режем до 0-255:
+    # иначе перебор миллиардов кодов съедает всю память
     for a,b,_ in re.findall(r'<([0-9a-fA-F]+)>\s*<([0-9a-fA-F]+)>\s*(<[0-9a-fA-F]+>|\[[^\]]*\])',cmap):
-        cov.update(range(int(a,16),int(b,16)+1))
+        lo,hi=int(a,16),min(int(b,16),255)
+        if lo<=hi:
+            cov.update(range(lo,hi+1))
     for m in re.finditer(r'beginbfchar(.*?)endbfchar',cmap,re.S):
-        for a in re.findall(r'<([0-9a-fA-F]+)>\s*<[0-9a-fA-F]+>',m.group(1)): cov.add(int(a,16))
+        for a in re.findall(r'<([0-9a-fA-F]+)>\s*<[0-9a-fA-F]+>',m.group(1)):
+            if int(a,16)<=255: cov.add(int(a,16))
     return cov
 def complete_tounicode(doc, dry_run=False):
     fixed=added=0
@@ -299,3 +304,33 @@ def strip_running_text(doc, texts, band=0.08) -> int:
                                   text=fitz.PDF_REDACT_TEXT_REMOVE)
             removed += len(rects)
     return removed
+
+
+# --- Знак минус U+2212 в картах ToUnicode ------------------------------------------------------------------
+# Если карты ToUnicode шрифтов отдают знак минус (U+2212) вместо дефиса, индексатор на страницах с большим числом
+# таких знаков (листинги кода, строки «−−−−» в выводе консоли) считает, что текста нет («нужен OCR»), и выдаёт
+# пустую страницу. Например, книга в 683 страницы (LuaTeX): 187 страниц без единого символа в индексе. Замена
+# целевого символа на обычный дефис-минус возвращает страницы целиком.
+def remap_minus(doc, dry_run=False):
+    """Заменяет U+2212 на U+002D в картах ToUnicode. Возвращает число изменённых карт."""
+    changed = 0
+    for xr in range(1, doc.xref_length()):
+        try:
+            if doc.xref_get_key(xr, "Type")[1] != "/Font":
+                continue
+            tu = doc.xref_get_key(xr, "ToUnicode")
+            if tu[0] != "xref":
+                continue
+            n = int(tu[1].split()[0])
+            stream = doc.xref_stream(n)
+            if stream is None or len(stream) > 2_000_000 or b"2212" not in stream.upper():
+                continue
+            new = re.sub(rb"(<[0-9A-Fa-f]+>\s*)<2212>", rb"\1<002D>", stream)
+            if new == stream:
+                continue
+            changed += 1
+            if not dry_run:
+                doc.update_stream(n, new)
+        except Exception:  # noqa: BLE001
+            continue
+    return changed

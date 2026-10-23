@@ -25,6 +25,11 @@
    повторяются на большинстве страниц и содержат не меньше 3 букв (штамп электронной библиотеки, название книги), удаляются:
    в индексе они шум, одинаковый на каждой странице. Номера страниц не трогаются.
 
+6. Знак минус U+2212 в картах ToUnicode. Если шрифты отдают U+2212 вместо дефиса, индексатор на страницах с большим
+   числом таких знаков (листинги кода, строки «----» в выводе консоли) считает, что текста нет, и выдаёт пустую
+   страницу. Целевой символ меняется на обычный дефис-минус. Шаг включается автоматически, только если индексатор
+   действительно не видит текст на заметной доле страниц (--fix-minus включает принудительно).
+
 Если файл ни в чём из этого не нуждается, выходной файл не создаётся. --rebuild, --escape-parens и --fix-tounicode
 принудительно включают шаг, --no-escape-parens и --no-fix-tounicode отключают. Исходный файл не изменяется.
 Запускается через repair-pdf.sh.
@@ -39,8 +44,8 @@ import pymupdf as fitz
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _pdf_common import (complete_tounicode, count_escaped_paren_pages, count_white_box_pages, escape_parens,  # noqa: E402
-                         find_running_text, inspector_pages, is_damaged, is_missing_page, scan_pages, strip_running_text,
-                         strip_white_boxes)
+                         find_running_text, inspector_pages, is_damaged, is_missing_page, remap_minus, scan_pages,
+                         strip_running_text, strip_white_boxes)
 
 
 def parse_args():
@@ -52,6 +57,8 @@ def parse_args():
     ap.add_argument("--no-escape-parens", action="store_true", help="не исправлять скобки в строках")
     ap.add_argument("--fix-tounicode", action="store_true", help="достроить карты ToUnicode, даже если пропусков не найдено")
     ap.add_argument("--no-fix-tounicode", action="store_true", help="не достраивать карты ToUnicode")
+    ap.add_argument("--fix-minus", action="store_true", help="заменить U+2212 в картах ToUnicode на дефис")
+    ap.add_argument("--no-fix-minus", action="store_true", help="не заменять U+2212 в картах ToUnicode")
     ap.add_argument("--strip-white-boxes", action="store_true", help="удалить белые подложки, даже если не найдены")
     ap.add_argument("--no-strip-white-boxes", action="store_true", help="не удалять белые подложки")
     ap.add_argument("--strip-running-heads", action="store_true",
@@ -62,6 +69,22 @@ def parse_args():
                     help="при пересборке удалить потерянные страницы вместо замены пустыми (нумерация сдвинется)")
     ap.add_argument("--force", action="store_true", help="перезаписать output, если он уже есть")
     return ap.parse_args()
+
+
+def restore_internal_links(src, out):
+    """Постраничный перенос теряет ссылки на другие страницы (цели не попали в перенесённый кусок): ставим их заново."""
+    for i in range(min(len(src), len(out))):
+        try:
+            have = {(round(l["from"].x0), round(l["from"].y0)) for l in out[i].get_links()}
+            for link in src[i].get_links():
+                # ссылки по имени (kind 4, у O'Reilly и многих других) в новом файле без таблицы имён не работают:
+                # заменяем их прямой ссылкой на страницу
+                if link.get("kind") in (fitz.LINK_GOTO, fitz.LINK_NAMED) and link.get("page", -1) >= 0 \
+                        and (round(link["from"].x0), round(link["from"].y0)) not in have:
+                    out[i].insert_link({"kind": fitz.LINK_GOTO, "from": link["from"], "page": link["page"],
+                                        "to": link.get("to", fitz.Point(0, 0)), "zoom": link.get("zoom", 0)})
+        except Exception:  # noqa: BLE001
+            continue
 
 
 def rebuild(src, drop_missing):
@@ -89,6 +112,12 @@ def rebuild(src, drop_missing):
         except Exception:  # noqa: BLE001
             failed.append(i + 1)
             out.new_page(width=page.rect.width, height=page.rect.height)
+    if not drop_missing:                       # номера страниц не сдвинулись: возвращаем внутренние ссылки и закладки
+        restore_internal_links(src, out)
+        try:
+            out.set_toc(src.get_toc())
+        except Exception:                      # noqa: BLE001
+            pass                               # битые закладки не должны мешать ремонту
     return out, missing, damaged, failed
 
 
@@ -129,13 +158,26 @@ def main() -> int:
     gap_fonts, _ = complete_tounicode(doc, dry_run=True)
     do_tounicode = (args.fix_tounicode or gap_fonts > 0) and not args.no_fix_tounicode
 
+    minus_fonts = remap_minus(doc, dry_run=True)
+    do_minus = False
+    if minus_fonts and not args.no_fix_minus:
+        if args.fix_minus:
+            do_minus = True
+        else:                                      # автоматически только если индексатор слеп на заметной доле страниц
+            from zotero_mcp.extract import extract_pdf
+            try:
+                blind = len(extract_pdf(str(src_p)).needs_ocr)
+            except Exception:  # noqa: BLE001
+                blind = 0
+            do_minus = blind >= max(5, 0.05 * len(doc))
+
     white_pages = count_white_box_pages(doc, range(0, len(doc), max(1, len(doc) // 40)))
     sampled = len(range(0, len(doc), max(1, len(doc) // 40)))
     do_white = (args.strip_white_boxes or white_pages > 0.3 * sampled) and not args.no_strip_white_boxes
     running = find_running_text(doc) if args.strip_running_heads else {}
     do_meta = bool(args.title or args.author)
 
-    if not do_rebuild and not do_escape and not do_tounicode and not do_white and not running and not do_meta:
+    if not (do_rebuild or do_escape or do_tounicode or do_minus or do_white or running or do_meta):
         print("Ремонт не нужен: структура страниц в порядке, экранированных скобок в строках почти нет, карты "
               "ToUnicode полные. Выход не создан.")
         return 0
@@ -162,6 +204,8 @@ def main() -> int:
         total, skipped = escape_parens(doc)
         done.append(f"заменено скобок в строках: {total}" + (f" (потоков со встроенными картинками пропущено: {skipped})" if skipped else ""))
     # clean=True нельзя: MuPDF заново записывает строки и возвращает экранированные скобки
+    if do_minus:
+        done.append(f"знак минус в картах ToUnicode заменён на дефис: шрифтов {remap_minus(doc)}")
     if do_tounicode:
         fonts, codes = complete_tounicode(doc)
         done.append(f"достроены карты ToUnicode: шрифтов {fonts}, кодов {codes}")
