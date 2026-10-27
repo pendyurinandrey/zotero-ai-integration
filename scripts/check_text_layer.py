@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from _zotero_common import copy_db, resolve_collection  # noqa: E402
 
 MIN_CHARS = 50          # страница считается текстовой, если в ней больше стольких символов
+INDEX_PAGE = 5000       # сколько записей индекса читать за один запрос
 PARTIAL_SHARE = 0.2     # доля страниц без текста, с которой PDF считается «частично без текста»
 
 
@@ -46,10 +47,17 @@ def indexed_item_keys(config_dir: Path) -> set[str] | None:
     try:
         import chromadb
         client = chromadb.PersistentClient(path=str(config_dir / "chroma_db"))
-        res = client.get_collection("zotero_library").get(include=["metadatas"])
+        coll = client.get_collection("zotero_library")
+        keys, offset = set(), 0
+        while True:      # порциями: один запрос на весь индекс падает на «too many SQL variables» (больше ~32 тысяч записей)
+            res = coll.get(include=["metadatas"], limit=INDEX_PAGE, offset=offset)
+            if not res["ids"]:
+                break
+            keys.update(m.get("parent_item_key") or m["item_key"] for m in res["metadatas"])
+            offset += INDEX_PAGE
     except Exception:
         return None
-    return {m.get("parent_item_key") or m["item_key"] for m in res["metadatas"]}
+    return keys
 
 
 TEXTUAL_TYPES = ("text/",)
