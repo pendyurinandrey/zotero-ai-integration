@@ -4,6 +4,7 @@
 
 - `CLAUDE.md` — общие правила; в корне репозитория подключается строкой `@ai-instructions/claude/CLAUDE.md`.
 - `skills/zotero-library/SKILL.md` — skill: как искать, как оформлять цитаты, как ограничивать поиск коллекцией. В `.claude/skills` ссылка на `skills/`.
+- `skills/prepare-books/SKILL.md` — skill: подготовка папки с книгами к загрузке в Zotero (проверка, ремонт, OCR, перенос в `fixed`), использует `scripts/prepare-books.sh`; описание в [docs/setup/06-ocr.md](../../docs/setup/06-ocr.md).
 - `settings.json` — разрешения (только читающие инструменты). В `.claude/settings.json` ссылка на этот файл.
 
 Подключение сервера и установка: [docs/clients/claude-code.md](../../docs/clients/claude-code.md).
