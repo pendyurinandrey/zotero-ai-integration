@@ -29,7 +29,7 @@ import pymupdf as fitz
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _pdf_common import (complete_tounicode, count_escaped_paren_pages, escape_parens, find_running_text,  # noqa: E402
-                         inspector_pages, scan_pages)  # импорт заодно отключает печать ошибок MuPDF
+                         inspector_pages, long_text_object_pages, scan_pages, split_text_objects)  # импорт заодно отключает печать ошибок MuPDF
 
 STOP = set("и в на не что как это с по к из для от или а но то при его ее их он она они был была были быть также "
            "которые который которая the of and to in is that for with on as are by be this from".split())
@@ -183,7 +183,7 @@ def indexer_read(path, doc, rows):
     }
 
 
-def trial_repair_fidelity(path, parens, tounicode):
+def trial_repair_fidelity(path, parens, tounicode, split_pages=()):
     """Применяет исправления (скобки, карты ToUnicode) к временной копии и возвращает сохранность текста после них."""
     try:
         doc = fitz.open(str(path))
@@ -192,6 +192,8 @@ def trial_repair_fidelity(path, parens, tounicode):
             changed += escape_parens(doc)[0]
         if tounicode:
             changed += complete_tounicode(doc)[1]
+        if split_pages:
+            changed += split_text_objects(doc, split_pages)
         if not changed:
             return None
         with tempfile.TemporaryDirectory() as tmp:
@@ -202,13 +204,15 @@ def trial_repair_fidelity(path, parens, tounicode):
         return None
 
 
-def repair_causes(esc_pages, esc_many, gap_fonts):
+def repair_causes(esc_pages, esc_many, gap_fonts, split_n=0):
     """Описание исправимых причин для вывода."""
     parts = []
     if esc_many:
         parts.append(f"экранированные скобки в строках текста на {esc_pages} страницах (индексатор обрывает на них разбор страницы)")
     if gap_fonts:
         parts.append(f"неполные карты ToUnicode у {gap_fonts} шрифтов (дефисы, тире, кавычки пропадают: «Блок-схема» -> «Блоксхема»)")
+    if split_n:
+        parts.append(f"на {split_n} страницах весь текст лежит в одном огромном текстовом блоке (индексатор такую страницу не читает)")
     return "; ".join(parts)
 
 
@@ -254,6 +258,7 @@ def main() -> int:
     esc_pages = count_escaped_paren_pages(doc)
     esc_many = esc_pages >= 3 and esc_pages >= 0.05 * n
     gap_fonts, _ = complete_tounicode(doc, dry_run=True)
+    split_cand = long_text_object_pages(doc)
     insp_n = None
     if not args.no_indexer:
         try:
@@ -356,10 +361,11 @@ def main() -> int:
             actions.append(f"{fix_sh} {ocr_q} {fix_q} --check")
         elif ix["fidelity"] is not None and ix["fidelity"] < FIDELITY_OK:
             verdict = "ИНДЕКСАТОР ИСКАЖАЕТ ТЕКСТ (слова теряются или переставляются)"
-            trial = trial_repair_fidelity(path, esc_many, gap_fonts > 0) if (esc_many or gap_fonts) else None
+            trial = (trial_repair_fidelity(path, esc_many, gap_fonts > 0, split_cand)
+                     if (esc_many or gap_fonts or split_cand) else None)
             if trial is not None and ix["fidelity"] is not None and trial > ix["fidelity"] + 0.05:
                 actions.append(f"{repair_sh} {src_q} {rep_q}")
-                notes.append(f"Причина: {repair_causes(esc_pages, esc_many, gap_fonts)}. Просмотрщики такой текст читают "
+                notes.append(f"Причина: {repair_causes(esc_pages, esc_many, gap_fonts, len(split_cand))}. Просмотрщики такой текст читают "
                              f"верно, индексатор нет. Проверка на временной копии: сохранность {ix['fidelity']:.3f} -> "
                              f"{trial:.3f}. repair-pdf.sh исправляет это, не меняя вид страниц.")
                 if lay["ocr_unfixed"]:
@@ -387,10 +393,11 @@ def main() -> int:
             notes.append(f"Страниц с искажениями: {ix['low_pages']} из {ix['checked']}. Чаще всего это оглавление, таблицы, "
                          "списки литературы и строки с большими пробелами. Для проверки найдите поиском знакомую фразу "
                          "с такой страницы.")
-            trial = trial_repair_fidelity(path, esc_many, gap_fonts > 0) if (esc_many or gap_fonts) else None
+            trial = (trial_repair_fidelity(path, esc_many, gap_fonts > 0, split_cand)
+                     if (esc_many or gap_fonts or split_cand) else None)
             if trial is not None and ix["fidelity"] is not None and trial > ix["fidelity"] + 0.015:
                 actions.append(f"{repair_sh} {src_q} {rep_q}")
-                notes.append(f"Часть искажений исправима: {repair_causes(esc_pages, esc_many, gap_fonts)}. Проверка на "
+                notes.append(f"Часть искажений исправима: {repair_causes(esc_pages, esc_many, gap_fonts, len(split_cand))}. Проверка на "
                              f"временной копии: сохранность {ix['fidelity']:.3f} -> {trial:.3f}.")
             if lay["white_boxes"] > 0.3 * lay["checked"]:
                 actions.append(f"{repair_sh} {src_q} {rep_q}")

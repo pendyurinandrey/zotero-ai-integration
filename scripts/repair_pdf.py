@@ -30,6 +30,11 @@
    страницу. Целевой символ меняется на обычный дефис-минус. Шаг включается автоматически, только если индексатор
    действительно не видит текст на заметной доле страниц (--fix-minus включает принудительно).
 
+7. Один огромный текстовый блок на странице. У части PDF (старые сканы с готовым слоем OCR) весь текст страницы
+   лежит в одном объекте BT...ET с десятками перемещений, и индексатор такую страницу не читает (из 3000 символов
+   остаётся колонтитул). Блок разбивается на отдельные, вид страницы не меняется. Шаг включается только на тех
+   страницах, где индексатор действительно теряет текст (--split-text включает принудительно).
+
 Если файл ни в чём из этого не нуждается, выходной файл не создаётся. --rebuild, --escape-parens и --fix-tounicode
 принудительно включают шаг, --no-escape-parens и --no-fix-tounicode отключают. Исходный файл не изменяется.
 Запускается через repair-pdf.sh.
@@ -44,8 +49,8 @@ import pymupdf as fitz
 
 sys.path.insert(0, str(Path(__file__).parent))
 from _pdf_common import (complete_tounicode, count_escaped_paren_pages, count_white_box_pages, escape_parens,  # noqa: E402
-                         find_running_text, inspector_pages, is_damaged, is_missing_page, remap_minus, scan_pages,
-                         strip_running_text, strip_white_boxes)
+                         find_running_text, inspector_pages, is_damaged, is_missing_page, long_text_object_pages,
+                         remap_minus, scan_pages, split_text_objects, strip_running_text, strip_white_boxes)
 
 
 def parse_args():
@@ -59,6 +64,8 @@ def parse_args():
     ap.add_argument("--no-fix-tounicode", action="store_true", help="не достраивать карты ToUnicode")
     ap.add_argument("--fix-minus", action="store_true", help="заменить U+2212 в картах ToUnicode на дефис")
     ap.add_argument("--no-fix-minus", action="store_true", help="не заменять U+2212 в картах ToUnicode")
+    ap.add_argument("--split-text", action="store_true", help="разбить длинные текстовые блоки на всех подходящих страницах")
+    ap.add_argument("--no-split-text", action="store_true", help="не разбивать текстовые блоки")
     ap.add_argument("--strip-white-boxes", action="store_true", help="удалить белые подложки, даже если не найдены")
     ap.add_argument("--no-strip-white-boxes", action="store_true", help="не удалять белые подложки")
     ap.add_argument("--strip-running-heads", action="store_true",
@@ -171,13 +178,29 @@ def main() -> int:
                 blind = 0
             do_minus = blind >= max(5, 0.05 * len(doc))
 
+    split_pages = []
+    if not args.no_split_text:
+        cand = long_text_object_pages(doc)
+        if cand and args.split_text:
+            split_pages = cand
+        elif cand:                                 # проверяем, где индексатор правда теряет текст
+            from zotero_mcp.extract import extract_pdf
+            try:
+                res = extract_pdf(str(src_p))
+                pages_md = [p if isinstance(p, str) else getattr(p, "markdown", str(p)) for p in res.pages]
+                split_pages = [i for i in cand if i < len(pages_md)
+                               and len(pages_md[i]) < 0.3 * len(doc[i].get_text()) and len(doc[i].get_text()) > 300]
+            except Exception:  # noqa: BLE001
+                split_pages = []
+    do_split = bool(split_pages)
+
     white_pages = count_white_box_pages(doc, range(0, len(doc), max(1, len(doc) // 40)))
     sampled = len(range(0, len(doc), max(1, len(doc) // 40)))
     do_white = (args.strip_white_boxes or white_pages > 0.3 * sampled) and not args.no_strip_white_boxes
     running = find_running_text(doc) if args.strip_running_heads else {}
     do_meta = bool(args.title or args.author)
 
-    if not (do_rebuild or do_escape or do_tounicode or do_minus or do_white or running or do_meta):
+    if not (do_rebuild or do_escape or do_tounicode or do_minus or do_split or do_white or running or do_meta):
         print("Ремонт не нужен: структура страниц в порядке, экранированных скобок в строках почти нет, карты "
               "ToUnicode полные. Выход не создан.")
         return 0
@@ -204,6 +227,8 @@ def main() -> int:
         total, skipped = escape_parens(doc)
         done.append(f"заменено скобок в строках: {total}" + (f" (потоков со встроенными картинками пропущено: {skipped})" if skipped else ""))
     # clean=True нельзя: MuPDF заново записывает строки и возвращает экранированные скобки
+    if do_split:
+        done.append(f"текстовые блоки разбиты на {len(split_pages)} страницах (вставлено разрывов: {split_text_objects(doc, split_pages)})")
     if do_minus:
         done.append(f"знак минус в картах ToUnicode заменён на дефис: шрифтов {remap_minus(doc)}")
     if do_tounicode:

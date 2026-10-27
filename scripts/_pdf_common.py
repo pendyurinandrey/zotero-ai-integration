@@ -334,3 +334,50 @@ def remap_minus(doc, dry_run=False):
         except Exception:  # noqa: BLE001
             continue
     return changed
+
+
+# --- Один огромный текстовый блок на странице -------------------------------------------------------------------
+# У части PDF (старые сканы со скрытым слоем OCR от iText и подобных) весь текст страницы лежит в одном объекте
+# BT ... ET с десятками перемещений Tm. Индексатор такой блок не читает: из 3000 символов страницы остаётся
+# колонтитул из 70. Блок разбивается на отдельные BT/ET перед каждым Tm (параметры шрифта, Tc, Tw, Tz, Tr
+# сохраняются между текстовыми объектами, положение задаёт сам Tm), результат для глаза не меняется.
+TM_OP = re.compile(rb"((?:-?[\d.]+\s+){6})Tm")
+
+
+def long_text_object_pages(doc, min_tm=20):
+    """Страницы с одним-двумя текстовыми блоками и множеством перемещений Tm (номера с 0)."""
+    found = []
+    for i, page in enumerate(doc):
+        try:
+            stream = b"".join(doc.xref_stream(x) or b"" for x in page.get_contents())
+        except Exception:  # noqa: BLE001
+            continue
+        bt = len(re.findall(rb"\bBT\b", stream))
+        tm = len(TM_OP.findall(stream))
+        if bt and tm >= min_tm and tm >= 10 * bt:
+            found.append(i)
+    return found
+
+
+def split_text_objects(doc, pages):
+    """Разбивает текстовые блоки на указанных страницах. Возвращает число вставленных разрывов."""
+    inserted = 0
+    for i in pages:
+        first = True
+        for x in doc[i].get_contents():
+            stream = doc.xref_stream(x)
+            if stream is None:
+                continue
+
+            def sub(m):
+                nonlocal first, inserted
+                if first:
+                    first = False
+                    return m.group(0)
+                inserted += 1
+                return b"ET\nBT\n" + m.group(0)
+
+            new = TM_OP.sub(sub, stream)
+            if new != stream:
+                doc.update_stream(x, new)
+    return inserted
