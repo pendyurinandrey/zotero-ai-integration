@@ -211,6 +211,111 @@ def complete_tounicode(doc, dry_run=False):
     return fixed,added
 
 
+# --- Кириллица в шрифте с кодировкой WinAnsi ----------------------------------------------------------------
+# Некоторые издатели объявляют шрифт заголовков или колонтитулов как WinAnsiEncoding без карты ToUnicode, хотя
+# в строках лежат коды кодовой страницы 1251. Просмотрщик рисует нужные глифы, а текст читается как «Îãëàâëåíèå».
+# Индексатор помечает такие страницы как испорченные, и страница теряется целиком. Карта ToUnicode на основе
+# cp1251 это исправляет (вид страницы не меняется).
+def _cp1251_cmap() -> bytes:
+    rows = []
+    for c in range(0x20, 0x100):
+        u = bytes([c]).decode("cp1251", errors="ignore")
+        if u:
+            rows.append(f"<{c:02x}> <{ord(u):04x}>")
+    return ("/CIDInit /ProcSet findresource begin 12 dict begin begincmap /CMapName /Adobe-Identity-UCS def "
+            "/CMapType 2 def\n1 begincodespacerange <00> <ff> endcodespacerange\n%d beginbfchar\n" % len(rows)
+            + "\n".join(rows) + "\nendbfchar\nendcmap CMapName currentdict /CMap defineresource pop end end").encode()
+
+
+def winansi_cyrillic_fonts(doc, sample_pages=40):
+    """Шрифты WinAnsi без ToUnicode, чей текст на деле cp1251: {xref: BaseFont}."""
+    cand = {}
+    for xr in range(1, doc.xref_length()):
+        try:
+            if doc.xref_get_key(xr, "Type")[1] != "/Font" or doc.xref_get_key(xr, "Subtype")[1] not in ("/Type1", "/TrueType"):
+                continue
+            if doc.xref_get_key(xr, "ToUnicode")[0] != "null" or doc.xref_get_key(xr, "Encoding")[1] != "/WinAnsiEncoding":
+                continue
+            base = doc.xref_get_key(xr, "BaseFont")[1].lstrip("/")
+            cand[xr] = base.split("+")[-1]
+        except Exception:  # noqa: BLE001
+            continue
+    if not cand:
+        return {}
+    text = {}
+    step = max(1, len(doc) // sample_pages)
+    for i in range(0, len(doc), step):
+        try:
+            for b in doc[i].get_text("dict")["blocks"]:
+                for ln in b.get("lines", []):
+                    for sp in ln["spans"]:
+                        text[sp["font"]] = text.get(sp["font"], "") + sp["text"]
+        except Exception:  # noqa: BLE001
+            continue
+    found = {}
+    for xr, name in cand.items():
+        letters = [c for c in text.get(name, "") if c.isalpha()]
+        if len(letters) < 5:
+            continue
+        high = [c for c in letters if "\u00c0" <= c <= "\u00ff"]
+        if len(high) / len(letters) < 0.6:
+            continue
+        dec = "".join(high).encode("cp1252", errors="ignore").decode("cp1251", errors="ignore")
+        if dec and sum("\u0400" <= c <= "\u04ff" for c in dec) / len(dec) > 0.9:
+            found[xr] = name
+    return found
+
+
+def fix_winansi_cyrillic(doc, dry_run=False):
+    fonts = winansi_cyrillic_fonts(doc)
+    if dry_run or not fonts:
+        return len(fonts)
+    for xr in fonts:
+        s = doc.get_new_xref()
+        doc.update_object(s, "<<>>")
+        doc.update_stream(s, _cp1251_cmap())
+        doc.xref_set_key(xr, "ToUnicode", f"{s} 0 R")
+    return len(fonts)
+
+
+# --- Невидимый текст поверх скана -----------------------------------------------------------------------------
+# Старый OCR (ABBYY FineReader, iText) кладёт после картинки страницы текст с режимом `3 Tr` (невидимый).
+# Индексатор такой текст не читает вообще. Правка: режим `0 Tr` и перенос картинки в конец потока: текст
+# оказывается под непрозрачной картинкой, глазом страница не меняется, а индексатор видит обычный текст.
+SCAN_THEN_TEXT = re.compile(rb"(q [^\n]*? Do Q)\s*(BT .*)$", re.S)
+
+
+def _hidden_text_pages(doc, pages):
+    out = []
+    for i in pages:
+        try:
+            cs = doc[i].get_contents()
+            if len(cs) != 1:
+                continue
+            m = SCAN_THEN_TEXT.match(doc.xref_stream(cs[0]) or b"")
+            if m and b" 3 Tr" in m.group(2):
+                out.append(i)
+        except Exception:  # noqa: BLE001
+            continue
+    return out
+
+
+def count_hidden_text_pages(doc, sample_pages=40):
+    """Доля (0..1) проверенных страниц со скан-картинкой и невидимым текстом после неё."""
+    idx = list(range(0, len(doc), max(1, len(doc) // sample_pages)))
+    return len(_hidden_text_pages(doc, idx)) / max(1, len(idx))
+
+
+def reveal_hidden_text(doc):
+    n = 0
+    for i in _hidden_text_pages(doc, range(len(doc))):
+        x = doc[i].get_contents()[0]
+        m = SCAN_THEN_TEXT.match(doc.xref_stream(x))
+        doc.update_stream(x, m.group(2).replace(b" 3 Tr", b" 0 Tr") + b"\n" + m.group(1) + b"\n")
+        n += 1
+    return n
+
+
 # --- Белые подложки под строками и повторяющиеся колонтитулы ----------------------------------------------
 # Некоторые PDF (например, из электронных библиотек) хранят под каждой строкой невидимую белую закрашенную
 # полосу `1 g x y w h re f`. Для глаза она незаметна, а индексатор принимает стопку одинаковых полос за линейки

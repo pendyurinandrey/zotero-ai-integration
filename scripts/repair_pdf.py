@@ -48,9 +48,9 @@ from pathlib import Path
 import pymupdf as fitz
 
 sys.path.insert(0, str(Path(__file__).parent))
-from _pdf_common import (complete_tounicode, count_escaped_paren_pages, count_white_box_pages, escape_parens,  # noqa: E402
+from _pdf_common import (complete_tounicode, count_hidden_text_pages, reveal_hidden_text, count_escaped_paren_pages, count_white_box_pages, escape_parens,  # noqa: E402
                          find_running_text, inspector_pages, is_damaged, is_missing_page, long_text_object_pages,
-                         remap_minus, scan_pages, split_text_objects, strip_running_text, strip_white_boxes)
+                         remap_minus, fix_winansi_cyrillic, scan_pages, split_text_objects, strip_running_text, strip_white_boxes)
 
 
 def parse_args():
@@ -64,6 +64,10 @@ def parse_args():
     ap.add_argument("--no-fix-tounicode", action="store_true", help="не достраивать карты ToUnicode")
     ap.add_argument("--fix-minus", action="store_true", help="заменить U+2212 в картах ToUnicode на дефис")
     ap.add_argument("--no-fix-minus", action="store_true", help="не заменять U+2212 в картах ToUnicode")
+    ap.add_argument("--reveal-text", action="store_true", help="сделать невидимый текст поверх скана читаемым для индексатора")
+    ap.add_argument("--no-reveal-text", action="store_true", help="не трогать невидимый текст поверх скана")
+    ap.add_argument("--no-fix-cp1251", action="store_true",
+                    help="не добавлять карты ToUnicode для шрифтов WinAnsi с текстом в кодировке cp1251")
     ap.add_argument("--split-text", action="store_true", help="разбить длинные текстовые блоки на всех подходящих страницах")
     ap.add_argument("--no-split-text", action="store_true", help="не разбивать текстовые блоки")
     ap.add_argument("--strip-white-boxes", action="store_true", help="удалить белые подложки, даже если не найдены")
@@ -198,9 +202,11 @@ def main() -> int:
     sampled = len(range(0, len(doc), max(1, len(doc) // 40)))
     do_white = (args.strip_white_boxes or white_pages > 0.3 * sampled) and not args.no_strip_white_boxes
     running = find_running_text(doc) if args.strip_running_heads else {}
+    do_cp1251 = fix_winansi_cyrillic(doc, dry_run=True) > 0 and not args.no_fix_cp1251
+    do_reveal = (args.reveal_text or count_hidden_text_pages(doc) > 0.3) and not args.no_reveal_text
     do_meta = bool(args.title or args.author)
 
-    if not (do_rebuild or do_escape or do_tounicode or do_minus or do_split or do_white or running or do_meta):
+    if not (do_rebuild or do_escape or do_tounicode or do_cp1251 or do_reveal or do_minus or do_split or do_white or running or do_meta):
         print("Ремонт не нужен: структура страниц в порядке, экранированных скобок в строках почти нет, карты "
               "ToUnicode полные. Выход не создан.")
         return 0
@@ -231,6 +237,10 @@ def main() -> int:
         done.append(f"текстовые блоки разбиты на {len(split_pages)} страницах (вставлено разрывов: {split_text_objects(doc, split_pages)})")
     if do_minus:
         done.append(f"знак минус в картах ToUnicode заменён на дефис: шрифтов {remap_minus(doc)}")
+    if do_reveal:
+        done.append(f"невидимый текст поверх скана сделан обычным и спрятан под картинкой: страниц {reveal_hidden_text(doc)}")
+    if do_cp1251:
+        done.append(f"добавлены карты ToUnicode (cp1251) для шрифтов с объявленной кодировкой WinAnsi: {fix_winansi_cyrillic(doc)}")
     if do_tounicode:
         fonts, codes = complete_tounicode(doc)
         done.append(f"достроены карты ToUnicode: шрифтов {fonts}, кодов {codes}")
