@@ -227,14 +227,34 @@ def _cp1251_cmap() -> bytes:
             + "\n".join(rows) + "\nendbfchar\nendcmap CMapName currentdict /CMap defineresource pop end end").encode()
 
 
+def _latin1_identity_codes(cmap: str) -> int:
+    """Сколько кодов 0xC0-0xFF карта ToUnicode отображает в тот же код Latin-1 (U+00C0-U+00FF): признак того, что
+    кириллица в cp1251 записана в карте как «Ã», «Ð» и т. п."""
+    n = 0
+    for a, b, u in re.findall(r"<([0-9a-fA-F]{2})>\s*<([0-9a-fA-F]{2})>\s*<([0-9a-fA-F]{4})>", cmap):
+        a, b, u = int(a, 16), int(b, 16), int(u, 16)
+        if a >= 0xC0 and u == a:
+            n += b - a + 1
+    for a, u in re.findall(r"^<([0-9a-fA-F]{2})>\s*<([0-9a-fA-F]{4})>", cmap, re.M):
+        a, u = int(a, 16), int(u, 16)
+        if a >= 0xC0 and u == a:
+            n += 1
+    return n
+
+
 def winansi_cyrillic_fonts(doc, sample_pages=40):
-    """Шрифты WinAnsi без ToUnicode, чей текст на деле cp1251: {xref: BaseFont}."""
+    """Шрифты, чей текст на деле cp1251, а не Latin-1: WinAnsi без ToUnicode, либо с картой ToUnicode, в которой коды
+    0xC0-0xFF отображены в Latin-1. Возвращает {xref: BaseFont}."""
     cand = {}
     for xr in range(1, doc.xref_length()):
         try:
             if doc.xref_get_key(xr, "Type")[1] != "/Font" or doc.xref_get_key(xr, "Subtype")[1] not in ("/Type1", "/TrueType"):
                 continue
-            if doc.xref_get_key(xr, "ToUnicode")[0] != "null" or doc.xref_get_key(xr, "Encoding")[1] != "/WinAnsiEncoding":
+            tu = doc.xref_get_key(xr, "ToUnicode")
+            if tu[0] == "null":
+                if doc.xref_get_key(xr, "Encoding")[1] != "/WinAnsiEncoding":
+                    continue
+            elif tu[0] != "xref" or _latin1_identity_codes(doc.xref_stream(int(tu[1].split()[0])).decode("latin1")) < 10:
                 continue
             base = doc.xref_get_key(xr, "BaseFont")[1].lstrip("/")
             cand[xr] = base.split("+")[-1]
@@ -271,6 +291,10 @@ def fix_winansi_cyrillic(doc, dry_run=False):
     if dry_run or not fonts:
         return len(fonts)
     for xr in fonts:
+        tu = doc.xref_get_key(xr, "ToUnicode")
+        if tu[0] == "xref":                                   # карта есть, но неверная: заменяем её содержимое
+            doc.update_stream(int(tu[1].split()[0]), _cp1251_cmap())
+            continue
         s = doc.get_new_xref()
         doc.update_object(s, "<<>>")
         doc.update_stream(s, _cp1251_cmap())
