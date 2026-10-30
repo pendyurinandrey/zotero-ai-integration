@@ -6,6 +6,7 @@
   * PDF с дефектами исправляется (repair-pdf.sh, fix-ocr-layer.sh), результат пишется в `fixed`;
   * скан или PDF с текстом из контуров распознаётся (OCR: ocrmypdf; векторные страницы сначала растеризуются);
   * DjVu -> PDF -> OCR (djvu-to-pdf.sh); EPUB -> PDF (epub-to-pdf.sh --text-only); RTF -> .txt (rtf-to-txt.sh);
+  * Word (.doc, .docx, .docm) и .odt -> PDF через LibreOffice (office-to-pdf.sh), затем проверка как у обычного PDF;
   * папка со страницами SVG -> PDF -> OCR (svg-to-pdf.sh);
   * .txt, .md, .html лежат в `fixed` как есть (индексатор читает их сам).
 Исходные файлы (кроме PDF, которые можно загружать как есть и которые переносятся) не изменяются.
@@ -29,9 +30,10 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 SH = {n: str(HERE / f"{n}.sh") for n in ("check-pdf", "repair-pdf", "fix-ocr-layer", "svg-to-pdf", "djvu-to-pdf",
-                                          "epub-to-pdf", "rtf-to-txt", "rasterize-pdf")}
+                                          "epub-to-pdf", "rtf-to-txt", "rasterize-pdf", "office-to-pdf")}
 AS_IS_EXT = {".txt", ".md", ".html", ".htm"}
 SKIP_SUFFIX = ("_ocr", "_fix", "_repaired", "_ocr_fix")
+OFFICE_EXT = {".doc", ".docx", ".docm", ".odt"}
 
 
 def log(msg=""):
@@ -163,6 +165,7 @@ def improve_pdf(src: Path, work: Path, tag: str, lang: str, steps: list, notes: 
             break
         seen.add(code)
         nxt = None
+        n_steps = len(steps)
         out = work / f"{tag}_s{it}.pdf"
         if code == "damaged":
             st = do_repair(cur, out)
@@ -203,6 +206,7 @@ def improve_pdf(src: Path, work: Path, tag: str, lang: str, steps: list, notes: 
             cur, info = nxt, new
         else:
             notes.append("шаг не улучшил результат и отброшен")
+            del steps[n_steps:]
             break
     return cur, info
 
@@ -225,6 +229,8 @@ def discover(folder: Path, out_name: str, only: str):
             if sum(1 for f in p.iterdir() if f.suffix.lower() == ".svg") >= 3:
                 items.append(("svg", p))
             continue
+        if p.name.startswith("~$"):          # служебный файл блокировки Word, а не документ
+            continue
         ext = p.suffix.lower()
         if ext == ".pdf" and not p.stem.endswith(SKIP_SUFFIX):
             items.append(("pdf", p))
@@ -232,6 +238,8 @@ def discover(folder: Path, out_name: str, only: str):
             items.append(("djvu", p))
         elif ext == ".epub":
             items.append(("epub", p))
+        elif ext in OFFICE_EXT:
+            items.append(("office", p))
         elif ext == ".rtf":
             items.append(("rtf", p))
         elif ext in AS_IS_EXT:
@@ -239,6 +247,14 @@ def discover(folder: Path, out_name: str, only: str):
         else:
             items.append(("unknown", p))
     return items
+
+
+def office_dst(path: Path, out_dir: Path) -> Path:
+    """Имя PDF для Word-файла. Если рядом есть файл с тем же именем и другим расширением (глава.doc и глава.docx
+    или глава.pdf), результат получает суффикс с расширением: глава_docx.pdf."""
+    clash = [q for q in path.parent.iterdir() if q != path and q.stem == path.stem
+             and q.suffix.lower() in OFFICE_EXT | {".pdf", ".djvu", ".epub"}]
+    return out_dir / (f"{path.stem}_{path.suffix.lower()[1:]}.pdf" if clash else f"{path.stem}.pdf")
 
 
 def place(src: Path, out_dir: Path, copy: bool, force: bool):
@@ -256,8 +272,8 @@ def process(kind, path: Path, out_dir: Path, work: Path, args):
            "out": None}
     steps, notes = res["steps"], res["notes"]
     tag = re.sub(r"\W+", "_", path.stem)[:30] or "book"
-    dst_pdf = out_dir / (path.stem + ".pdf")
-    if kind in ("pdf", "djvu", "svg", "epub") and dst_pdf.exists() and not args.force:
+    dst_pdf = office_dst(path, out_dir) if kind == "office" else out_dir / (path.stem + ".pdf")
+    if kind in ("pdf", "djvu", "svg", "epub", "office") and dst_pdf.exists() and not args.force:
         res["status"] = "пропущено: в fixed уже есть такой файл (--force перезапишет)"
         return res
     if kind == "unknown":
@@ -291,6 +307,30 @@ def process(kind, path: Path, out_dir: Path, work: Path, args):
         shutil.copy2(tmp, dst_pdf)
         res["out"] = dst_pdf.name
         res["status"] = status_of(res["after"])
+        return res
+    if kind == "office":
+        raw = work / f"{tag}_raw.pdf"
+        r = run([SH["office-to-pdf"], path, raw, "--force"])
+        if not raw.exists():
+            res["status"] = "ошибка: " + (r.stderr.strip() or r.stdout.strip())[:200]
+            return res
+        steps.append("office-to-pdf (LibreOffice)")
+        notes.append("страницы размечены LibreOffice и могут отличаться от Word: «стр.» в ссылках это номер страницы PDF")
+        for ln in r.stdout.splitlines():
+            if ln.startswith("Внимание"):
+                notes.append(ln[:200])
+        before = run_check(raw)
+        cur, info = improve_pdf(raw, work, tag, args.lang, steps, notes, first=before)
+        res["after"] = info
+        out_dir.mkdir(exist_ok=True)
+        shutil.copy2(cur, dst_pdf)
+        res["out"] = dst_pdf.name
+        res["status"] = status_of(info)
+        if info["code"] == "distorted":          # у документов Word это почти всегда таблицы, а не дефект файла
+            res["status"] = "готово, с оговорками: индексатор плохо читает таблицы"
+        if info["fid"] is not None and info["fid"] < 0.9 and "таблиц" not in " ".join(notes):
+            notes.append("сохранность текста низкая: в документе, вероятно, много таблиц (индексатор склеивает ячейки); "
+                         "если по ним нужен точный поиск, рассмотрите .txt с таблицами в виде строк")
         return res
     if kind in ("djvu", "svg"):
         raw = work / f"{tag}_raw.pdf"
@@ -398,7 +438,7 @@ def main() -> int:
                     info = run_check(p)
                     log(f"    {info['verdict'][:90]}\n    план: {PLAN.get(info['code'], '?')}")
                 else:
-                    log("    план: " + {"djvu": "DjVu -> PDF -> OCR", "svg": "SVG -> PDF -> OCR", "epub": "EPUB -> PDF",
+                    log("    план: " + {"djvu": "DjVu -> PDF -> OCR", "svg": "SVG -> PDF -> OCR", "epub": "EPUB -> PDF", "office": "Word/ODT -> PDF (LibreOffice)",
                                       "rtf": "RTF -> .txt", "text": "как есть", "unknown": "пропуск"}[kind])
                 continue
             t1 = time.time()
