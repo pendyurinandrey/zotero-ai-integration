@@ -15,7 +15,7 @@
 | Zotero 10 | с [zotero.org](https://www.zotero.org/download/) | [2](docs/setup/02-zotero.md) | — |
 | Ollama | `brew install ollama` | [3](docs/setup/03-ollama-and-model.md) | — |
 | Модель `bge-m3` | `ollama pull bge-m3` | [3](docs/setup/03-ollama-and-model.md) | 1,2 ГБ |
-| `zotero-mcp-server` (форк, с `torch` и др.) | `uv tool install ...` | [4](docs/setup/04-mcp-server.md) | 1,2 ГБ |
+| `zotero-mcp-server` 0.17.0 (с `torch` и др.) | `uv tool install ...` | [4](docs/setup/04-mcp-server.md) | 1,2 ГБ |
 | `ocrmypdf` + Tesseract, `tesseract-lang` (если есть сканы) | `brew install ocrmypdf tesseract-lang` | [6](docs/setup/06-ocr.md) | 0,7 ГБ (языки) и более |
 | Claude Code | приложение Claude, вкладка Code | [клиент](docs/clients/claude-code.md) | — |
 
@@ -30,7 +30,7 @@
 brew install uv ollama ocrmypdf tesseract-lang
 brew services start ollama
 ollama pull bge-m3
-uv tool install --python 3.13 "zotero-mcp-server[semantic,pdf] @ git+https://github.com/pendyurinandrey/zotero-mcp.git@v0.13.1-snippet-width"
+uv tool install --python 3.13 "zotero-mcp-server[semantic,pdf]==0.17.0"
 ```
 
 Дальше: создать `~/.config/zotero-mcp/config.json` ([шаг 4](docs/setup/04-mcp-server.md)), построить индекс ([шаг 5](docs/setup/05-indexing.md)) и подключить Claude Code ([клиент](docs/clients/claude-code.md)).
