@@ -27,3 +27,18 @@ enabled_tools = [
 
 [mcp_servers.zotero.env]
 ZOTERO_LOCAL = "true"
+
+[mcp_servers.zotero.tools.zotero_list_libraries]
+approval_mode = "approve"
+
+[mcp_servers.zotero.tools.zotero_get_search_database_status]
+approval_mode = "approve"
+
+[mcp_servers.zotero.tools.zotero_semantic_search]
+approval_mode = "approve"
+
+[mcp_servers.zotero.tools.zotero_read_pdf_pages]
+approval_mode = "approve"
+
+[mcp_servers.zotero.tools.zotero_get_item_metadata]
+approval_mode = "approve"
