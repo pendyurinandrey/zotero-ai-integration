@@ -56,6 +56,7 @@ uv tool install --python 3.13 "zotero-mcp-server[semantic,pdf]==0.17.0"
    8. [Папки предметов вне репозитория](docs/subjects.md) — если ведёте несколько предметов
 3. **Подключите нейросеть** — выберите свою:
    - Claude Code: [настройка](docs/clients/claude-code.md)
+   - Codex: [настройка](docs/clients/codex.md)
 4. Если что-то не работает: [troubleshooting](docs/troubleshooting.md).
 
 ## Для нейросетей
