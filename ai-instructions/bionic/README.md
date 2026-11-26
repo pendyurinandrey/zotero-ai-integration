@@ -8,13 +8,29 @@
 | [prepare-books](skills/prepare-books/SKILL.md) | Проверка файлов, конвертация, OCR и папка с результатами |
 | [zotero-import](skills/zotero-import/SKILL.md) | Извлечение реквизитов и сборка RIS для ручного импорта |
 
-В Bionic откройте проект с включённым **Allow coding** и выберите корень репозитория как рабочую папку. Эта настройка даёт сессии встроенный инструмент выполнения команд. [Документация Bionic о рабочих папках и командах](https://lmstudio.ai/docs/bionic/agent/code-project).
+В Bionic откройте проект с включённым **Allow coding**. Эта настройка даёт сессии встроенный инструмент выполнения команд. Для `prepare-books` и `zotero-import` выберите корень репозитория как рабочую папку. Для `zotero-library` можно оставить рабочую папку своего проекта. [Документация Bionic о рабочих папках и командах](https://lmstudio.ai/docs/bionic/agent/code-project).
 
 Добавьте нужные каталоги с `SKILL.md` через **Settings → Skills** и выберите скил через `@` в чате. Если в списке видны одноимённые скилы из других клиентов, выберите версию из этой папки. [Документация Bionic о скилах](https://lmstudio.ai/docs/bionic/agent/skills).
 
 Для первого запроса попробуйте: «Ищи только в коллекции X. Где обсуждается Y? Дай короткую цитату со страницей или таймкодом». Поиск использует существующий индекс и `bge-m3` в Ollama. Gemma загружается в Bionic. Все три скила передают команды встроенному инструменту выполнения команд.
 
-Если Bionic сообщает, что у MCP-сервера `zotero-library` нет инструмента `search_passages` или `search_passages.sh`, проверьте, появился ли следом запуск `./scripts/search-passages.sh` в терминале. Если запуск появился, дождитесь результата. Если Bionic остановился на ошибке, повторите запрос в проекте с **Allow coding** и уточните: «Передай команду `./scripts/search-passages.sh` встроенному инструменту выполнения команд Bionic».
+## Поиск из другого проекта
+
+Выполните один раз в обычном Terminal из корня репозитория `zotero-ai-integration`.
+
+```sh
+mkdir -p "$HOME/.local/share"
+target="$HOME/.local/share/zotero-ai-integration"
+if [ ! -e "$target" ] && [ ! -L "$target" ]; then
+  ln -s "$PWD" "$target"
+fi
+```
+
+Скил вызывает скрипт по пути `"$HOME/.local/share/zotero-ai-integration/scripts/search-passages.sh"`, а `workdir` указывает на открытый проект. В отдельном запросе можно сразу указать абсолютный путь к скрипту вместо создания ссылки.
+
+## Ошибки вызова
+
+Если Bionic сообщает, что у MCP-сервера `zotero-library` нет инструмента `search_passages` или `search_passages.sh`, проверьте, появился ли следом запуск `search-passages.sh` в терминале. Если Bionic остановился на ошибке, уточните в запросе: «Вызови `search-passages.sh` по полному пути через `shell_command`».
 
 Если `shell_command` сообщает, что `timeout_ms` обязателен, команда ещё не запущена. Для проверки Ollama повторите вызов с числовым полем `timeout_ms: 10000`. Параметр `--max-time 5` ограничивает время работы самого `curl`.
 
